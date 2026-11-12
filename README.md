@@ -22,7 +22,7 @@
 
 ### 安装
 
-已在 **Pi 1.4.0、Node.js 24** 环境验证。Pi 直接加载 TypeScript 扩展，无需单独构建。
+面向 **Pi >=1.5.0**，开发依赖固定 **1.5.2**；已在 **1.5.0、1.5.2** 和向后兼容目标 **1.4.0**、Node.js 24 上通过类型检查及本地回归。Pi 直接加载 TypeScript 扩展，无需单独构建。开发依赖的固定版本不是运行时版本上限。
 
 #### 方式一：从 GitHub 全局安装（推荐）
 
@@ -64,7 +64,7 @@ Pi 会管理仓库下载，并将包登记到个人 `settings.json` 的 `package
 
 #### 启动顺序
 
-必须在通知发出前安装过滤。Pi 1.4.0 按以下顺序解析扩展：
+必须在通知发出前安装过滤。Pi 1.5.0 / 1.5.2 按以下顺序解析扩展：
 
 1. 命令行 `-e` 扩展。
 2. 项目显式扩展，然后是项目自动发现的扩展。
@@ -145,7 +145,7 @@ pi -e /absolute/path/to/pi-notice-control/index.ts
 
 ### 兼容性与限制
 
-- 当前包装 Pi 1.4.0 的共享、可写 `ctx.ui.notify`，不是官方通知中间件接口。升级 Pi 后需要重新验证。
+- 当前包装宿主共享、可写的 `ctx.ui.notify`，已验证 Pi 1.5.0 / 1.5.2，并保留 1.4.0 兼容。这不是官方通知中间件接口；不锁定补丁版本，但未来宿主改变此契约时仍需重新适配。
 - 支持 TUI 与 RPC 的通知接口；无 UI 的 print/JSON 模式不安装拦截。
 - 不处理 Pi 内部直接渲染的提示、聊天消息、工具结果、权限确认框、状态栏或桌面通知，也不移除已经显示的提示。
 - `notify()` 没有传递来源扩展信息，因此不提供按来源匹配。
@@ -199,7 +199,7 @@ The extension only wraps `ctx.ui.notify()`. It does not modify Pi or `pi-sandbox
 
 ### Installation
 
-Verified with **Pi 1.4.0 and Node.js 24**. Pi loads TypeScript extensions directly; no separate build is required.
+Targets **Pi >=1.5.0**, with development dependencies pinned to **1.5.2**. Type checks and local regressions pass on **1.5.0, 1.5.2**, and the backward-compatibility target **1.4.0**, using Node.js 24. Pi loads TypeScript extensions directly; no separate build is required. The development pin is not a runtime upper-version limit.
 
 #### Option 1: Global installation from GitHub (recommended)
 
@@ -241,7 +241,7 @@ Choose one installation method to avoid loading copies from different directorie
 
 #### Startup order
 
-Filtering must be installed before a notification is emitted. Pi 1.4.0 resolves extensions in this order:
+Filtering must be installed before a notification is emitted. Pi 1.5.0 / 1.5.2 resolves extensions in this order:
 
 1. Command-line `-e` extensions.
 2. Explicit project extensions, followed by auto-discovered project extensions.
@@ -322,7 +322,7 @@ Matching behavior:
 
 ### Compatibility and limitations
 
-- The implementation wraps Pi 1.4.0’s shared, writable `ctx.ui.notify`. This is not an official notification middleware API; verify compatibility after upgrading Pi.
+- The implementation wraps the host's shared, writable `ctx.ui.notify`, verified on Pi 1.5.0 / 1.5.2 with 1.4.0 compatibility retained. This is not an official notification middleware API. No patch-version pin is enforced, but future changes to this contract may require adaptation.
 - TUI and RPC notification interfaces are supported. No wrapper is installed in print/JSON modes without a UI.
 - It does not filter notices rendered directly by Pi internals, chat messages, tool results, permission dialogs, status bars, or desktop notifications. It cannot remove notices already displayed.
 - `notify()` provides no source-extension metadata, so matching by source is not supported.
