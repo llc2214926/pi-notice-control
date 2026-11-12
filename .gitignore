@@ -1,0 +1,5 @@
+node_modules/
+.local/
+# 本地验证代码不得暂存或提交。
+tests/
+*.test.*

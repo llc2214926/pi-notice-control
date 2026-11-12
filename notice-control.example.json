@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "rules": [
+    {
+      "id": "sandbox-all-domains",
+      "enabled": true,
+      "match": {
+        "type": "warning",
+        "contains": "Network sandbox allows all domains because network.allowedDomains contains \"*\""
+      },
+      "action": "hide"
+    }
+  ]
+}
