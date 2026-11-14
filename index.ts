@@ -54,7 +54,10 @@ export default function noticeControl(pi: ExtensionAPI): void {
         history.push({
           id: ++nextId,
           time: new Date().toISOString(),
-          message: message.length > MESSAGE_LIMIT ? `${message.slice(0, MESSAGE_LIMIT)}…（已截断）` : message,
+          // 复制 UTF-16 前缀，避免 V8 的字符串切片继续持有完整原文。
+          message: message.length > MESSAGE_LIMIT
+            ? `${Buffer.from(message.slice(0, MESSAGE_LIMIT), "utf16le").toString("utf16le")}…（已截断）`
+            : message,
           type: level,
           action: rule?.action ?? "show",
           rule: rule?.id,
