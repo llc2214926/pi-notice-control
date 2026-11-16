@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Rule-based filtering and in-memory history for Pi extension notifications",
+  "description": "Configurable Pi notification filtering, tool output folding, and in-memory notice history",
   "keywords": ["pi-package"],
   "pi": {
     "extensions": ["./index.ts"]
   },
-  "files": ["index.ts", "rules.ts", "notice-control.example.json", "README.md"],
+  "files": ["index.ts", "rules.ts", "tool-display.ts", "notice-control.example.json", "README.md"],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=1.5.0",
+    "@earendil-works/pi-tui": ">=1.5.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.5.2",

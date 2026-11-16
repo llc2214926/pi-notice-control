@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { getAgentDir, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { findRule, parseConfig, type Config, type NoticeType } from "./rules.ts";
+import { registerToolDisplay } from "./tool-display.ts";
 
 type Notice = { id: number; time: string; message: string; type: NoticeType; action: "hide" | "show"; rule?: string };
 const HISTORY_LIMIT = 100;
@@ -21,6 +22,8 @@ export default function noticeControl(pi: ExtensionAPI): void {
   let restore: (() => void) | undefined;
   let notify: ExtensionUIContext["notify"] | undefined;
 
+  registerToolDisplay(pi, () => config?.toolDisplay);
+
   function reloadConfig(): void {
     try {
       config = parseConfig(JSON.parse(readFileSync(configPath, "utf8")));
@@ -28,7 +31,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
     } catch (error) {
       config = undefined;
       enabled = false;
-      notify?.(`[notice-control] 规则加载失败，已停止过滤。${String(error)}`, "warning");
+      notify?.(`[notice-control] 配置加载失败，已停止过滤并恢复工具原始显示。${String(error)}`, "warning");
     }
   }
 
@@ -70,7 +73,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
       }
       if (!hide) original.call(ui, message, type);
     };
-    // shortcut: Pi 1.4 共用可写 ui；官方提供通知中间件后替换此包装。
+    // shortcut: Pi 1.5 共用可写 ui；官方提供通知中间件后替换此包装。
     try {
       ui.notify = wrapper;
       if (ui.notify !== wrapper) throw new Error("ctx.ui.notify 不可替换");
@@ -93,10 +96,12 @@ export default function noticeControl(pi: ExtensionAPI): void {
     restore = undefined;
     notify = undefined;
     history = [];
+    config = undefined;
+    enabled = false;
   });
 
   pi.registerCommand("notices", {
-    description: "查看扩展通知记录；on/off 临时开关；reload 重载规则",
+    description: "查看扩展通知记录；on/off 临时开关通知过滤；reload 重载配置",
     getArgumentCompletions: (prefix) => ["on", "off", "reload"]
       .filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
@@ -104,7 +109,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
       const command = args.trim();
       if (command === "reload") {
         reloadConfig();
-        if (config) notify(`[notice-control] 已载入 ${config.rules.length} 条规则，过滤${enabled ? "开启" : "关闭"}。`, "info");
+        if (config) notify(`[notice-control] 已载入 ${config.rules.length} 条规则，过滤${enabled ? "开启" : "关闭"}；工具精简${config.toolDisplay?.enabled ? "开启" : "关闭"}。`, "info");
         return;
       }
       if (command === "on" || command === "off") {

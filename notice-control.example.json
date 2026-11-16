@@ -1,5 +1,11 @@
 {
   "enabled": true,
+  "toolDisplay": {
+    "enabled": true,
+    "maxLines": 0,
+    "collapseCommandErrors": true,
+    "errorMaxLines": 5
+  },
   "rules": [
     {
       "id": "sandbox-all-domains",

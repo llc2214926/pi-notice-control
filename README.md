@@ -6,102 +6,81 @@
 
 ## 简体中文
 
-为 [Pi](https://pi.dev/) 扩展通知提供规则过滤：隐藏已知的重复提醒，保留其他通知，并随时查看最近的处理记录。
+为 [Pi](https://pi.dev/) 提供通知过滤和工具输出折叠：隐藏重复提醒，精简 `write` / `edit` / `bash` 的显示，并限制命令失败输出的高度。
 
-只接管 `ctx.ui.notify()`，不修改 Pi 或 `pi-sandbox` 的源码，也不更改沙箱权限或系统代理。没有额外的运行时依赖，不注册模型工具。
+仅改变显示，不修改工具执行、返回给模型的结果、沙箱权限或系统代理。不注册模型工具，无需额外运行时依赖。
 
 ### 功能
 
-- 按通知原文进行全文匹配或包含匹配，可附加 `info`、`warning`、`error` 等级条件。
-- 按顺序执行规则：第一条命中生效，未命中原样放行。
-- 支持 `hide`（隐藏）和 `show`（放行），可临时关闭过滤或重新加载配置。
-- 保留最近 100 条内存记录，包括时间、原文、等级、处理结果和命中规则。
-- 配置无效或过滤异常时停止过滤，保留原通知并显示诊断。
+- 按通知原文进行全文或包含匹配，可附加 `info`、`warning`、`error` 等级条件；首条规则命中生效，未命中原样放行。
+- 保留最近 100 条通知记录，支持临时暂停过滤、查看详情和重载 JSON。
+- 工具折叠时，`write` / `edit` 只显示工具名和路径；`bash` 只显示命令首行，多行命令附带省略行数。
+- 成功结果默认隐藏，也可配置最大显示行数；命令错误默认最多 5 行，保留 `Command exited with code N`。
+- 展开工具后恢复原渲染器的完整显示；配置无效时停止过滤和精简，避免沿用旧的隐藏策略。
 
-> 隐藏安全提醒不等于改变安全策略。示例规则只隐藏“允许所有域名”的提示，`allowedDomains: ["*"]` 仍然允许所有域名。
+> 隐藏安全提醒不等于改变安全策略。示例只隐藏“允许所有域名”的通知，`allowedDomains: ["*"]` 仍然允许所有域名。
 
 ### 安装
 
-面向 **Pi >=1.5.0**，开发依赖固定 **1.5.2**；已在 **1.5.0、1.5.2** 和向后兼容目标 **1.4.0**、Node.js 24 上通过类型检查及本地回归。Pi 直接加载 TypeScript 扩展，无需单独构建。开发依赖的固定版本不是运行时版本上限。
+要求 **Pi >=1.5.0**，所有功能均不支持更早版本。Pi 直接加载 TypeScript，无需单独构建。
 
-#### 方式一：从 GitHub 全局安装（推荐）
-
-仓库：[llc2214926/pi-notice-control](https://github.com/llc2214926/pi-notice-control)
+#### 从 GitHub 全局安装（推荐）
 
 ```sh
 pi install git:github.com/llc2214926/pi-notice-control
 ```
 
-Pi 会管理仓库下载，并将包登记到个人 `settings.json` 的 `packages` 列表中，默认对所有项目生效，**不需要手动注册 `extensions`**。
+Pi 会将包登记到个人 `settings.json` 的 `packages` 列表，默认对所有项目生效，无需再注册 `extensions`。
 
-如果需要隐藏 `pi-sandbox` 的启动提醒，请将 `git:github.com/llc2214926/pi-notice-control` 放在 `packages` 列表中 `npm:pi-sandbox` 之前，保留其余条目。安装后还需完成下面的规则初始化。
+要隐藏 `pi-sandbox` 的启动通知，请把 `git:github.com/llc2214926/pi-notice-control` 放在 `packages` 列表中 `npm:pi-sandbox` 之前，保留其余条目。
 
-#### 方式二：本地目录安装与手动注册
+#### 本地目录安装
 
-适合本地开发，或需要早于包内扩展接管通知的场景。
+将仓库保存在固定目录，在个人 `~/.pi/agent/settings.json` 的 `extensions` 列表首位加入：
 
-1. 将仓库保存在固定目录，例如 `/absolute/path/to/pi-notice-control`。保留 `index.ts` 及同目录的 `rules.ts`；日常使用无需安装开发依赖。
-2. 在个人 Pi 配置的 `extensions` 列表首位加入 `index.ts` 的绝对路径。默认配置文件为 `~/.pi/agent/settings.json`：
+```json
+{
+  "extensions": ["/absolute/path/to/pi-notice-control/index.ts"]
+}
+```
 
-   ```json
-   {
-     "extensions": [
-       "/absolute/path/to/pi-notice-control/index.ts"
-     ]
-   }
-   ```
+合并到已有配置，不要覆盖其他扩展或设置。保留同目录的 `index.ts`、`rules.ts` 和 `tool-display.ts`；日常使用无需安装开发依赖。两种安装方式选一种，避免加载多个副本。
 
-   请合并到已有配置，保留其他扩展、包和设置，不要整文件覆盖。
+#### 初始化与迁移
 
-两种安装方式选一种即可，避免同时加载不同目录中的副本。不要移动或删除正在使用的本地安装目录。
+1. 将 [notice-control.example.json](notice-control.example.json) 保存到 `~/.pi/agent/notice-control.json`。已有文件只合并需要的字段或规则，不要覆盖原配置。
+2. 如果之前加载了 `~/.pi/agent/extensions/pi-minimal-write-edit.ts`，请停用它，避免两个渲染器叠加。自动发现目录里的文件可移出该目录保存；手动注册的文件则移除对应配置条目。
+3. 在 Pi 中运行 `/reload` 或重启。
 
-#### 初始化规则（两种方式都需要）
-
-1. 将[示例规则](notice-control.example.json)的内容保存到 `~/.pi/agent/notice-control.json`；也可使用下方“配置”中的完整 JSON。已有规则文件时，只合并需要的规则，不要直接覆盖。
-2. 在 Pi 中运行 `/reload`，或重启 Pi。
-
-`PI_CODING_AGENT_DIR` 会同时改变个人 `settings.json` 和 `notice-control.json` 所在的 agent 目录。扩展不会自动创建规则文件；文件缺失时会显示诊断并保持通知放行。
+`PI_CODING_AGENT_DIR` 会同时改变个人 `settings.json` 和 `notice-control.json` 所在的 agent 目录。扩展不自动创建配置文件；文件缺失时显示诊断并保持原始显示。
 
 #### 启动顺序
 
-必须在通知发出前安装过滤。Pi 1.5.0 / 1.5.2 按以下顺序解析扩展：
+通知过滤必须先于通知生产者加载。Pi 1.5 的顺序为：命令行 `-e`、项目扩展、用户扩展、包内扩展、内置扩展。项目和用户扩展各自先显式注册、后自动发现；包内扩展先项目包、后用户包，同一作用域按包列表顺序。
 
-1. 命令行 `-e` 扩展。
-2. 项目显式扩展，然后是项目自动发现的扩展。
-3. 用户显式扩展，然后是用户自动发现的扩展。
-4. 包内扩展，项目包先于用户包；同一作用域内按包列表顺序加载。
-5. 内置扩展。
-
-GitHub 安装属于包内扩展：将它放在 `pi-sandbox` 之前，可以处理后者的启动通知，但无法捕获更早的项目或用户显式、自动发现扩展的启动通知。本地手动注册的优先级更高，仍晚于项目扩展。
-
-如果需要更早安装过滤，可将本地副本作为第一个 `-e` 参数：
+GitHub 安装无法捕获更早的项目或用户扩展启动通知。需要更早接管时，可将本地副本作为第一个 `-e` 参数：
 
 ```sh
 pi -e /absolute/path/to/pi-notice-control/index.ts
 ```
 
-不要仅依赖 `00-` 文件名前缀；包列表顺序只能控制同一作用域的包，不能改变上述来源优先级。
-
-### 命令
-
-| 命令 | 作用 |
-| --- | --- |
-| `/notices` | 查看最近通知，最新的在前；选中后显示记录详情 |
-| `/notices off` | 本次会话暂停过滤，仍然记录通知 |
-| `/notices on` | 本次会话开启过滤，需要有效配置和已安装的拦截入口 |
-| `/notices reload` | 重读规则，并用配置中的 `enabled` 重置临时开关 |
-
-按 Escape 取消选择。`/notices on` 和 `/notices off` 不修改配置文件。修改规则用 `/notices reload`；修改扩展源码或安装路径用 Pi 的 `/reload`。
+不要仅依赖 `00-` 文件名前缀；包列表顺序不能改变不同来源的优先级。
 
 ### 配置
 
-只读取个人 agent 目录中的 `notice-control.json`，不读取项目规则，以免仓库配置自行屏蔽安全提醒。使用严格 JSON，不支持注释。
+只读取个人 agent 目录中的 `notice-control.json`，不读取项目配置，以免仓库自行屏蔽安全提醒。使用严格 JSON，不支持注释。
 
-默认示例只隐藏这条沙箱通知：
+下面的配置隐藏指定沙箱通知，并启用工具精简：
 
 ```json
 {
   "enabled": true,
+  "toolDisplay": {
+    "enabled": true,
+    "maxLines": 0,
+    "collapseCommandErrors": true,
+    "errorMaxLines": 5
+  },
   "rules": [
     {
       "id": "sandbox-all-domains",
@@ -116,62 +95,75 @@ pi -e /absolute/path/to/pi-notice-control/index.ts
 }
 ```
 
+只需要工具折叠时，可将 `rules` 设为 `[]`。**旧配置省略 `toolDisplay` 时保持原有行为，不自动启用工具精简。**
+
+#### 工具显示
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `toolDisplay.enabled` | `true` | 工具精简开关；仅在提供 `toolDisplay` 对象时生效，`false` 恢复原显示 |
+| `toolDisplay.maxLines` | `0` | 折叠时成功结果最多显示的行数；`0` 完全隐藏结果，只保留调用行 |
+| `toolDisplay.collapseCommandErrors` | `true` | 是否折叠 `bash` / `powershell` 的失败输出；`false` 使用原渲染器显示错误 |
+| `toolDisplay.errorMaxLines` | `5` | 折叠命令错误的最大行数；至少 `1`，设为 `1` 时有退出码就只显示退出码 |
+
+- 行数必须是安全整数，按终端自动换行后的**实际显示行**计算。上限包含省略提示和退出码，不包含调用行及 Pi 外框留白。行数太少时优先显示正文或退出码，不额外显示省略提示；窄终端中退出码缩写为 `exit N`，其他单行可能被截短。
+- 成功结果保留开头，shell 结果保留末尾；命令错误优先保留末尾，并固定显示已有的 `Command exited with code N`。超时、终止等没有退出码的失败保留末尾错误信息，不伪造退出码。
+- 其他工具的错误不主动隐藏或限行；调用行保留原渲染器的参数显示。
+- Ctrl+O（默认工具展开快捷键）或在支持鼠标的模式中点击单条工具可展开；展开后不受本扩展的行数限制。修改过快捷键时以 Pi 当前绑定为准。
+- 此功能只改变工具渲染，不截断模型结果或会话记录；宿主自身的结果截断仍然存在，超长输出按原提示读取完整文件。
+- 顶层 `enabled` 和 `/notices on|off` 只控制通知过滤，**不控制工具显示**。
+
+折叠效果示例（`errorMaxLines: 5`，终端宽度足够时）：
+
+```text
+write src/config.ts
+
+$ npm run check
+… (42 lines hidden; ctrl+o to expand)
+最后几行错误信息
+更多错误信息
+检查失败
+Command exited with code 1
+```
+
+#### 通知规则
+
 | 字段 | 说明 |
 | --- | --- |
-| `enabled` | 顶层总开关或单条规则开关，可省略，默认 `true` |
-| `rules` | 必填数组；空数组表示全部放行 |
-| `id` | 必填、唯一、非空白字符串，长度不超过 64 个 UTF-16 码元 |
+| `enabled` | 顶层通知过滤开关或单条规则开关，可省略，默认 `true` |
+| `rules` | 必填数组；空数组表示所有通知放行 |
+| `id` | 必填、唯一、非空白字符串，不超过 64 个 UTF-16 码元 |
 | `match.exact` | 与整条原文完全相同，区分大小写 |
 | `match.contains` | 原文包含指定文字，区分大小写 |
-| `match.type` | 可选，限定为 `info`、`warning` 或 `error` |
+| `match.type` | 可选，只允许 `info`、`warning` 或 `error` |
 | `action` | 必填，只允许 `hide` 或 `show` |
 
-匹配行为：
+`exact` 和 `contains` 必须且只能设置一个，不能是空白文字，不支持正则。规则按数组顺序匹配，禁用规则跳过；要保留例外，请把 `show` 规则放在更宽泛的 `hide` 规则之前。
 
-- `exact` 和 `contains` 必须且只能设置一个，不能是空白文字。暂不支持正则表达式。
-- 规则按数组顺序匹配，禁用规则跳过。需要保留例外时，将 `show` 规则放在更宽泛的 `hide` 规则之前。
-- 未传等级的通知按 `info` 匹配；放行时仍保留调用方的原始参数。
-- 匹配完整原文，不包括 Pi 渲染时追加的 `Warning:` 或 `Error:` 前缀，不自动移除 ANSI 样式。
-- 未知字段、无效值、重复 ID 或空匹配会使整份配置失效，而不是部分应用。
-- 配置缺失、解析失败或过滤异常时停止过滤。修复后运行 `/notices reload`。
+未传等级的通知按 `info` 匹配，放行时保留原始参数。匹配使用完整原文，不包括 Pi 追加的 `Warning:` / `Error:` 前缀，不自动移除 ANSI 样式。
 
-### 记录与隐私
+未知字段、无效值、重复 ID 或空匹配使整份配置失效，停止通知过滤和工具精简；修复后运行 `/notices reload`。
 
-- 同时记录隐藏和放行的通知；每个扩展运行时最多保留 100 条，超过后淘汰最旧记录。
-- 单条原文最多保留前 4096 个 UTF-16 码元，超出部分标注截断；规则匹配仍使用截断前的完整文字。
-- 记录只在内存中保存，本扩展不将其写入磁盘或发送给模型。主动查看详情会在 Pi 界面显示该记录。
-- 记录详情会移除 ANSI 样式及部分控制字符；本扩展的管理提示不再进入记录，避免递归。
-- `/notices reload` 不清空记录；Pi 的 `/reload`、新建或切换会话、退出会清空记录。
+### 命令
 
-### 兼容性与限制
+| 命令 | 作用 |
+| --- | --- |
+| `/notices` | 查看最近通知，最新的在前；选中显示详情，Escape 取消 |
+| `/notices off` | 本次会话暂停通知过滤，仍然记录通知 |
+| `/notices on` | 本次会话开启通知过滤，需要有效配置和可用的通知入口 |
+| `/notices reload` | 重读全部配置，并用顶层 `enabled` 重置通知过滤的临时开关 |
 
-- 当前包装宿主共享、可写的 `ctx.ui.notify`，已验证 Pi 1.5.0 / 1.5.2，并保留 1.4.0 兼容。这不是官方通知中间件接口；不锁定补丁版本，但未来宿主改变此契约时仍需重新适配。
-- 支持 TUI 与 RPC 的通知接口；无 UI 的 print/JSON 模式不安装拦截。
-- 不处理 Pi 内部直接渲染的提示、聊天消息、工具结果、权限确认框、状态栏或桌面通知，也不移除已经显示的提示。
-- `notify()` 没有传递来源扩展信息，因此不提供按来源匹配。
-- 清理时不覆盖其他扩展后来安装的包装；其他扩展如果直接替换入口或提前保存旧引用，仍可能绕过过滤。
-- **扩展自身的界面文案目前是中文。双语仅指本文档，不代表已实现界面语言切换。**
+命令不修改 JSON。修改配置用 `/notices reload`；工具设置在下一次渲染时应用，已显示的工具可切换展开状态刷新。修改扩展代码或安装路径请用 Pi 的 `/reload`。
 
-### 开发与验证
+### 隐私与限制
 
-开发时安装依赖并检查类型：
-
-```sh
-npm install
-npm run check
-```
-
-本地已有测试文件时，可使用 Node.js 24 运行：
-
-```sh
-npm test
-```
-
-`tests/` 中的测试及夹具只在本地保留，不暂存、不提交、不分发，因此普通克隆不会包含这些文件。`.local/` 中的验证产物和 `node_modules/` 同样被忽略。
-
-现有本地验证覆盖 15 项检查，包括匹配、透传、开关、重载、历史上限、会话清理及原始沙箱通知函数的调用。集成验证使用真实 Pi 扩展运行器，并确认接管后目标通知隐藏、其他警告保留。
-
-验证环境的沙箱拒绝嵌套 Unix socket，因此没有在其中完成另一层 `pi-sandbox` 的完整启动测试，也没有绕过限制。完整 TUI 启动效果仍需在正常 Pi 会话中确认。
+- 最近 100 条通知只保存在内存，不写磁盘、不发给模型。单条最多保留前 4096 个 UTF-16 码元，超出标记截断；规则仍匹配完整原文。
+- 查看通知详情时移除 ANSI 样式及部分控制字符；管理提示不进入历史。`/notices reload` 保留记录，Pi `/reload`、会话替换或退出清空记录。
+- 通知过滤支持 TUI / RPC 的 `ctx.ui.notify()`；工具折叠面向 TUI。无 UI 的 print/JSON 模式不接管。
+- 不过滤 Pi 内部提示、聊天消息、权限确认框、状态栏或桌面通知，不移除已显示的通知。`notify()` 没有来源信息，不能按来源扩展匹配。
+- 原生 `!` / `!!` 用户 shell 输出不是模型的 `bash` 工具调用，不在此折叠配置范围内。图片由 Pi 单独绘制，不受文本行数限制。没有可用工具渲染器的历史条目保持宿主显示。
+- 其他扩展若提前保存或替换通知入口，可能绕过过滤；其他工具渲染器也可能影响最终显示。宿主接口变化时可能需要适配。
+- 扩展自身的界面文案目前是中文；双语仅指本文档。
 
 ### 许可证
 
@@ -183,172 +175,99 @@ npm test
 
 ## English
 
-Rule-based notification filtering for [Pi](https://pi.dev/) extensions: hide known, repetitive notices, preserve other notifications, and inspect recent filtering decisions.
-
-The extension only wraps `ctx.ui.notify()`. It does not modify Pi or `pi-sandbox` source code, change sandbox permissions or system proxies, add runtime dependencies, or register model-callable tools.
-
-### Features
-
-- Match the full notification text or a substring, optionally restricted to `info`, `warning`, or `error`.
-- Evaluate rules in order: the first match wins, and unmatched notifications pass through unchanged.
-- Use `hide` and `show` actions, pause filtering for the current session, and reload configuration.
-- Keep the latest 100 notifications in memory, including timestamps, text, levels, decisions, and matching rules.
-- Stop filtering and display a diagnostic when configuration is invalid or filtering fails, preserving the original notifications.
-
-> Hiding a security warning does not change the security policy. The example rule only hides the “all domains allowed” notice; `allowedDomains: ["*"]` still allows all domains.
+Notification filtering and compact tool output for [Pi](https://pi.dev/). Hide repetitive notices, simplify `write` / `edit` / `bash` calls, and bound failed-command output without changing tool execution, model results, sandbox permissions, or system proxies.
 
 ### Installation
 
-Targets **Pi >=1.5.0**, with development dependencies pinned to **1.5.2**. Type checks and local regressions pass on **1.5.0, 1.5.2**, and the backward-compatibility target **1.4.0**, using Node.js 24. Pi loads TypeScript extensions directly; no separate build is required. The development pin is not a runtime upper-version limit.
-
-#### Option 1: Global installation from GitHub (recommended)
-
-Repository: [llc2214926/pi-notice-control](https://github.com/llc2214926/pi-notice-control)
+Requires **Pi >=1.5.0** for all features; earlier versions are unsupported. No build or additional runtime dependency is required.
 
 ```sh
 pi install git:github.com/llc2214926/pi-notice-control
 ```
 
-Pi manages the repository download and adds the package to the `packages` list in your personal `settings.json`. Installation is global by default, applying across projects; **no manual `extensions` registration is needed**.
+Pi adds the package to your personal `settings.json`. To filter `pi-sandbox` startup notices, place this package before `npm:pi-sandbox` in `packages`.
 
-To hide the `pi-sandbox` startup warning, place `git:github.com/llc2214926/pi-notice-control` before `npm:pi-sandbox` in the `packages` list, preserving the other entries. After installation, complete the rules setup below.
+For a local installation, add the absolute path to `index.ts` first in your personal `extensions` list. Keep `index.ts`, `rules.ts`, and `tool-display.ts` together. Choose one installation method and preserve existing settings.
 
-#### Option 2: Local directory and manual registration
+Save [notice-control.example.json](notice-control.example.json) as `~/.pi/agent/notice-control.json`, merging rather than overwriting existing rules. Disable the standalone `pi-minimal-write-edit.ts` if installed, then run `/reload` or restart Pi. Auto-discovered copies can be moved outside the extensions directory; remove explicit registrations if applicable.
 
-Use this for local development or when filtering must be installed before package extensions.
+`PI_CODING_AGENT_DIR` changes the directory containing both personal settings and this configuration. Missing configuration produces a warning and leaves normal display intact.
 
-1. Keep the repository in a stable directory, such as `/absolute/path/to/pi-notice-control`. Keep `index.ts` and `rules.ts` together. Normal use does not require installing development dependencies.
-2. Add the absolute path to `index.ts` as the first entry in your personal Pi `extensions` list. The default settings file is `~/.pi/agent/settings.json`:
-
-   ```json
-   {
-     "extensions": [
-       "/absolute/path/to/pi-notice-control/index.ts"
-     ]
-   }
-   ```
-
-   Merge this entry into your existing configuration. Preserve other extensions, packages, and settings; do not replace the whole file.
-
-Choose one installation method to avoid loading copies from different directories. Do not move or delete a local installation directory while it is in use.
-
-#### Rules setup (required for both methods)
-
-1. Save the contents of the [example rules](notice-control.example.json) as `~/.pi/agent/notice-control.json`, or use the complete JSON in the Configuration section below. If a rules file already exists, merge only the rules you need rather than overwriting it.
-2. Run `/reload` in Pi, or restart Pi.
-
-`PI_CODING_AGENT_DIR` changes the agent directory containing both your personal `settings.json` and `notice-control.json`. The extension does not create the rules file automatically. If it is missing, a diagnostic is displayed and notifications remain visible.
-
-#### Startup order
-
-Filtering must be installed before a notification is emitted. Pi 1.5.0 / 1.5.2 resolves extensions in this order:
-
-1. Command-line `-e` extensions.
-2. Explicit project extensions, followed by auto-discovered project extensions.
-3. Explicit user extensions, followed by auto-discovered user extensions.
-4. Package extensions, with project packages before user packages; packages within the same scope follow their list order.
-5. Built-in extensions.
-
-A GitHub installation is a package extension. Placing it before `pi-sandbox` lets it handle that package’s startup notices, but not earlier notices from explicit or auto-discovered project or user extensions. Manual local registration has higher priority, but still runs after project extensions.
-
-For earlier interception, supply a local copy as the first `-e` argument:
+Filtering must load before notice producers. Pi 1.5 loads command-line extensions, project extensions, user extensions, package extensions, then built-ins. Project/user scopes load explicit entries before auto-discovered ones; project packages precede user packages, and each package list retains its order. For earlier interception, pass the local entry as the first `-e` argument:
 
 ```sh
 pi -e /absolute/path/to/pi-notice-control/index.ts
 ```
 
-Do not rely solely on a `00-` filename prefix. Package list order only controls packages within the same scope; it does not override the source priorities above.
+### Configuration
+
+Only the personal `notice-control.json` is read, never project rules. Use strict JSON without comments. The linked example combines one sandbox-notice rule with tool folding. For tool folding alone:
+
+```json
+{
+  "enabled": true,
+  "rules": [],
+  "toolDisplay": {
+    "enabled": true,
+    "maxLines": 0,
+    "collapseCommandErrors": true,
+    "errorMaxLines": 5
+  }
+}
+```
+
+**Omitting `toolDisplay` preserves the old notification-only behavior.** An empty `toolDisplay` object enables the defaults above.
+
+| Tool display field | Default | Behavior |
+| --- | --- | --- |
+| `enabled` | `true` | Enable compact tool rendering; `false` restores the original display |
+| `maxLines` | `0` | Maximum collapsed success-result lines; `0` hides the result entirely |
+| `collapseCommandErrors` | `true` | Fold failed `bash` / `powershell` results; `false` leaves errors to the original renderer |
+| `errorMaxLines` | `5` | Maximum collapsed command-error lines; minimum `1` preserves the exit status when present |
+
+Limits count **wrapped terminal rows**, including the omission hint and exit status, excluding the call header and Pi's outer padding. Values must be safe integers (`maxLines >= 0`, `errorMaxLines >= 1`). When space is tight, content or exit status takes priority over the omission hint. Narrow terminals abbreviate the status to `exit N`; other single lines may be shortened.
+
+Collapsed `write` / `edit` calls show only the tool name and path. `bash` shows its first command line and an omitted-line count. Other calls keep their original parameter display. Success previews keep the beginning, shell previews keep the end. Failed commands pin an existing `Command exited with code N`; timeouts and other failures keep trailing error text without inventing an exit code. Other tools' errors are not additionally hidden or capped.
+
+Expand with Ctrl+O (the default binding) or click one tool where mouse support is available. Expanded views use the original renderer without this extension's line cap. Model results and session records are unchanged; Pi's own truncation and full-output file references still apply.
+
+The top-level `enabled` and `/notices on|off` control **notification filtering only**, independently of tool display.
+
+#### Notification rules
+
+| Field | Behavior |
+| --- | --- |
+| Top-level / rule `enabled` | Optional, defaults to `true` |
+| `rules` | Required array; `[]` allows every notice |
+| `id` | Unique, non-blank string, at most 64 UTF-16 code units |
+| `match.exact` / `match.contains` | Exactly one required, non-blank, case-sensitive; no regex |
+| `match.type` | Optional `info`, `warning`, or `error` restriction |
+| `action` | Required `hide` or `show` |
+
+The first enabled matching rule wins. Put `show` exceptions before broader `hide` rules. Matching uses the full original text, including ANSI styling but excluding Pi's added `Warning:` / `Error:` prefix. Omitted levels match as `info`; pass-through preserves the original arguments.
+
+Unknown fields, invalid values, duplicate IDs, or empty matches invalidate the entire configuration. Filtering and compact display stop rather than retaining old hiding rules. Fix the JSON and run `/notices reload`.
 
 ### Commands
 
 | Command | Behavior |
 | --- | --- |
-| `/notices` | Browse recent notifications, newest first; select one to display its details |
-| `/notices off` | Pause filtering for this session while continuing to record notifications |
-| `/notices on` | Enable filtering for this session; requires valid configuration and an installed wrapper |
-| `/notices reload` | Reload rules and reset the temporary switch to the configured `enabled` value |
+| `/notices` | Browse the latest notices and select details; Escape cancels |
+| `/notices off` | Pause notification filtering for this session; keep recording |
+| `/notices on` | Enable notification filtering with valid configuration and an available notification hook |
+| `/notices reload` | Reload all configuration and reset the notification switch to top-level `enabled` |
 
-Press Escape to cancel the selector. `/notices on` and `/notices off` do not modify the configuration file. Use `/notices reload` after changing rules, and Pi’s `/reload` after changing extension code or its installation path.
+Commands do not modify JSON. Tool settings apply on the next render; toggle an existing row's expansion to refresh it. Use Pi's `/reload` after changing extension code or installation paths.
 
-### Configuration
+### Privacy and limitations
 
-The extension reads only `notice-control.json` in your personal agent directory. It does not read project-level rules, preventing repository configuration from silently suppressing security notices. Use strict JSON without comments.
-
-The default example hides only this sandbox notice:
-
-```json
-{
-  "enabled": true,
-  "rules": [
-    {
-      "id": "sandbox-all-domains",
-      "enabled": true,
-      "match": {
-        "type": "warning",
-        "contains": "Network sandbox allows all domains because network.allowedDomains contains \"*\""
-      },
-      "action": "hide"
-    }
-  ]
-}
-```
-
-| Field | Description |
-| --- | --- |
-| `enabled` | Optional global or per-rule switch; defaults to `true` |
-| `rules` | Required array; an empty array allows every notification through |
-| `id` | Required, unique, non-blank string of at most 64 UTF-16 code units |
-| `match.exact` | Case-sensitive match against the entire original message |
-| `match.contains` | Case-sensitive substring match against the original message |
-| `match.type` | Optional restriction to `info`, `warning`, or `error` |
-| `action` | Required; either `hide` or `show` |
-
-Matching behavior:
-
-- Specify exactly one of `exact` and `contains`, using non-blank text. Regular expressions are not supported.
-- Rules are evaluated in array order, skipping disabled rules. Put a `show` exception before a broader `hide` rule to keep that notification visible.
-- A notification without an explicit level is matched as `info`; pass-through preserves the caller’s original arguments.
-- Matching uses the complete original text, without Pi’s rendered `Warning:` or `Error:` prefix. ANSI formatting is not stripped before matching.
-- Unknown fields, invalid values, duplicate IDs, and empty matches invalidate the entire configuration rather than applying it partially.
-- Missing configuration, parse errors, or filtering errors stop filtering. Fix the problem and run `/notices reload`.
-
-### History and privacy
-
-- Hidden and visible notifications are both recorded. Each extension runtime retains up to 100 entries, evicting the oldest when full.
-- Each message retains at most its first 4096 UTF-16 code units, with a truncation marker when needed. Rules still match against the complete, untruncated message.
-- History stays in memory. This extension does not write it to disk or send it to the model. Selecting an entry displays its details in Pi’s UI.
-- Detail views remove ANSI formatting and some control characters. The extension’s own management notices do not enter history again, avoiding recursion.
-- `/notices reload` keeps history. Pi’s `/reload`, creating or switching sessions, and exit clear it.
-
-### Compatibility and limitations
-
-- The implementation wraps the host's shared, writable `ctx.ui.notify`, verified on Pi 1.5.0 / 1.5.2 with 1.4.0 compatibility retained. This is not an official notification middleware API. No patch-version pin is enforced, but future changes to this contract may require adaptation.
-- TUI and RPC notification interfaces are supported. No wrapper is installed in print/JSON modes without a UI.
-- It does not filter notices rendered directly by Pi internals, chat messages, tool results, permission dialogs, status bars, or desktop notifications. It cannot remove notices already displayed.
-- `notify()` provides no source-extension metadata, so matching by source is not supported.
-- Cleanup preserves wrappers installed later by other extensions. An extension that replaces the entry point or retains an older `notify` reference may bypass filtering.
-- **The extension’s own UI text is currently Chinese. This bilingual README does not imply a UI language-switching feature.**
-
-### Development and validation
-
-Install development dependencies and check types:
-
-```sh
-npm install
-npm run check
-```
-
-If the local test files are available, run them with Node.js 24:
-
-```sh
-npm test
-```
-
-Tests and fixtures under `tests/` are local-only: they are not staged, committed, or distributed, so a normal clone does not include them. Verification artifacts under `.local/` and `node_modules/` are also ignored.
-
-Existing local validation covers 15 checks, including matching, pass-through, switches, reloads, history limits, session cleanup, and calls to the original sandbox notification function. Integration validation uses Pi’s actual extension runner and confirms that the target notice is hidden while other warnings remain visible.
-
-The validation environment blocks nested Unix sockets, so a complete nested `pi-sandbox` startup was not tested, and no sandbox restrictions were bypassed. Full TUI startup behavior still needs confirmation in a normal Pi session.
+- Up to 100 notices stay in memory only, never written to disk or sent to the model. Each retains at most 4096 UTF-16 code units; matching uses the full text. Details strip ANSI and some control characters.
+- Management notices do not enter history. Configuration reload preserves history; Pi reload, session replacement, and exit clear it.
+- Notification filtering supports TUI / RPC `ctx.ui.notify()`; tool folding targets TUI. Print/JSON modes without a UI are unaffected.
+- Internal Pi notices, chat messages, permission dialogs, status bars, and desktop notifications are not filtered. Already displayed notices cannot be removed. Source-extension matching is unavailable.
+- Native `!` / `!!` user shell output is not a model tool call and is not covered. Pi renders images separately from these text limits. Historical entries without an available tool renderer retain host rendering.
+- Other extensions that replace or retain notification hooks may bypass filtering; other tool renderers may affect the final display. Future host API changes may require adaptation.
+- Hiding a sandbox warning does not change its security policy. The extension's own UI text is currently Chinese; only this README is bilingual.
 
 ### License
 

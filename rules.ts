@@ -5,7 +5,13 @@ export type Rule = {
   match: { type?: NoticeType; exact?: string; contains?: string };
   action: "hide" | "show";
 };
-export type Config = { enabled: boolean; rules: Rule[] };
+export type ToolDisplayConfig = {
+  enabled: boolean;
+  maxLines: number;
+  collapseCommandErrors: boolean;
+  errorMaxLines: number;
+};
+export type Config = { enabled: boolean; rules: Rule[]; toolDisplay?: ToolDisplayConfig };
 
 function object(value: unknown, keys: string[], label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -22,8 +28,30 @@ function enabled(value: unknown): boolean {
   return value ?? true;
 }
 
+function lineLimit(value: unknown, fallback: number, minimum: number, key: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`toolDisplay.${key} 必须是大于等于 ${minimum} 的安全整数`);
+  }
+  return value;
+}
+
+function parseToolDisplay(value: unknown): ToolDisplayConfig | undefined {
+  if (value === undefined) return undefined;
+  const config = object(value, ["enabled", "maxLines", "collapseCommandErrors", "errorMaxLines"], "toolDisplay");
+  if (config.collapseCommandErrors !== undefined && typeof config.collapseCommandErrors !== "boolean") {
+    throw new Error("toolDisplay.collapseCommandErrors 必须是布尔值");
+  }
+  return {
+    enabled: enabled(config.enabled),
+    maxLines: lineLimit(config.maxLines, 0, 0, "maxLines"),
+    collapseCommandErrors: config.collapseCommandErrors ?? true,
+    errorMaxLines: lineLimit(config.errorMaxLines, 5, 1, "errorMaxLines"),
+  };
+}
+
 export function parseConfig(value: unknown): Config {
-  const config = object(value, ["enabled", "rules"], "配置");
+  const config = object(value, ["enabled", "rules", "toolDisplay"], "配置");
   if (!Array.isArray(config.rules)) throw new Error("rules 必须是数组");
   const ids = new Set<string>();
   const rules = config.rules.map((value, index): Rule => {
@@ -50,7 +78,7 @@ export function parseConfig(value: unknown): Config {
       match: { type: match.type, ...(match.exact !== undefined ? { exact: text } : { contains: text }) },
     };
   });
-  return { enabled: enabled(config.enabled), rules };
+  return { enabled: enabled(config.enabled), rules, toolDisplay: parseToolDisplay(config.toolDisplay) };
 }
 
 export function findRule(rules: Rule[], message: string, type: NoticeType): Rule | undefined {
