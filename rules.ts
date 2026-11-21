@@ -8,6 +8,7 @@ export type Rule = {
 export type ToolDisplayConfig = {
   enabled: boolean;
   maxLines: number;
+  collapseConsecutive: boolean;
   collapseCommandErrors: boolean;
   errorMaxLines: number;
 };
@@ -38,14 +39,17 @@ function lineLimit(value: unknown, fallback: number, minimum: number, key: strin
 
 function parseToolDisplay(value: unknown): ToolDisplayConfig | undefined {
   if (value === undefined) return undefined;
-  const config = object(value, ["enabled", "maxLines", "collapseCommandErrors", "errorMaxLines"], "toolDisplay");
-  if (config.collapseCommandErrors !== undefined && typeof config.collapseCommandErrors !== "boolean") {
-    throw new Error("toolDisplay.collapseCommandErrors 必须是布尔值");
+  const config = object(value, ["enabled", "maxLines", "collapseConsecutive", "collapseCommandErrors", "errorMaxLines"], "toolDisplay");
+  for (const key of ["collapseConsecutive", "collapseCommandErrors"]) {
+    if (config[key] !== undefined && typeof config[key] !== "boolean") {
+      throw new Error(`toolDisplay.${key} 必须是布尔值`);
+    }
   }
   return {
     enabled: enabled(config.enabled),
     maxLines: lineLimit(config.maxLines, 0, 0, "maxLines"),
-    collapseCommandErrors: config.collapseCommandErrors ?? true,
+    collapseConsecutive: config.collapseConsecutive !== false,
+    collapseCommandErrors: config.collapseCommandErrors !== false,
     errorMaxLines: lineLimit(config.errorMaxLines, 5, 1, "errorMaxLines"),
   };
 }

@@ -7,15 +7,26 @@ type RenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
 type BaseComponents = { call?: Component; result?: Component };
 
 function plainText(text: string): string {
-  return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  return stripVTControlCharacters(text).replace(/\p{Cc}/gu, (char) => char === "\t" || char === "\n" ? char : "");
 }
 
 function resultText(result: AgentToolResult<unknown>): string {
   return result.content.filter((block) => block.type === "text").map((block) => plainText(block.text)).join("\n");
 }
 
-function compactCall(toolName: string, value: unknown, theme: Theme): Component {
+function isSearchTool(toolName: string): boolean {
+  return toolName === "search" || toolName.endsWith("_search") || toolName.startsWith("search_");
+}
+
+function compactCall(toolName: string, value: unknown, theme: Theme): Component | undefined {
   const args = (value ?? {}) as Record<string, unknown>;
+  if (isSearchTool(toolName)) {
+    const queries = Array.isArray(args.queries) ? args.queries.filter((query): query is string => typeof query === "string") : [];
+    const query = queries[0] ?? args.query ?? args.pattern;
+    if (typeof query !== "string") return undefined;
+    const suffix = queries.length > 1 ? theme.fg("muted", ` … (+${queries.length - 1} queries)`) : "";
+    return new TruncatedText(`${theme.fg("toolTitle", theme.bold(toolName))} ${theme.fg("accent", plainText(query).replace(/\s+/g, " "))}${suffix}`, 0, 0);
+  }
   if (toolName === "bash") {
     const command = typeof args.command === "string" ? plainText(args.command) : "";
     const lines = command.split("\n");
@@ -57,8 +68,11 @@ export function registerToolDisplay(pi: ExtensionAPI, getConfig: () => ToolDispl
   pi.registerToolRenderer((toolName, next) => {
     const base = next();
     if (!base) return undefined;
-    const compact = toolName === "write" || toolName === "edit" || toolName === "bash";
+    const search = isSearchTool(toolName);
+    const compact = toolName === "write" || toolName === "edit" || toolName === "bash" || search;
     const shell = toolName === "bash" || toolName === "powershell";
+    const foldErrors = shell || search || toolName === "agent_browser" || toolName.startsWith("agent_browser_")
+      || toolName === "fetch" || toolName.startsWith("fetch_") || toolName.endsWith("_fetch") || toolName === "get_search_content";
     const components = new WeakMap<object, BaseComponents>();
     function state(context: RenderContext): BaseComponents {
       let value = components.get(context.state);
@@ -68,28 +82,37 @@ export function registerToolDisplay(pi: ExtensionAPI, getConfig: () => ToolDispl
 
     return {
       ...base,
-      renderCall: base.renderCall ? (args, theme, context) => {
-        const previous = state(context);
-        // Even hidden renderers must receive updates: shell renderers maintain execution timers.
-        previous.call = base.renderCall!(args, theme, { ...context, lastComponent: previous.call });
-        if (getConfig()?.enabled && !context.expanded && compact) return compactCall(toolName, args ?? {}, theme);
-        return previous.call;
-      } : undefined,
+      get renderCall(): ToolRenderers["renderCall"] {
+        if (!base.renderCall && (!search || !getConfig()?.enabled)) return undefined;
+        return (args, theme, context) => {
+          const previous = state(context);
+          // Even hidden renderers must receive updates: shell renderers maintain execution timers.
+          previous.call = base.renderCall
+            ? base.renderCall(args, theme, { ...context, lastComponent: previous.call })
+            : new Text(`${theme.fg("toolTitle", theme.bold(toolName))}\n${theme.fg("muted", JSON.stringify(args ?? {}, null, 2))}`, 0, 0);
+          if (getConfig()?.enabled && !context.expanded && compact && !(search && context.isError)) {
+            return compactCall(toolName, args ?? {}, theme) ?? previous.call;
+          }
+          return previous.call;
+        };
+      },
       get renderResult(): ToolRenderers["renderResult"] {
         if (!getConfig()?.enabled && !base.renderResult) return undefined;
         return (result, options, theme, context) => {
           const config = getConfig();
           const folded = config?.enabled && !options.expanded;
           const limitedSuccess = folded && !context.isError && config.maxLines > 0;
+          const limitedError = folded && context.isError && foldErrors && config.collapseCommandErrors;
           const previous = state(context);
-          const fullOptions = limitedSuccess ? { ...options, expanded: true } : options;
+          const fullOptions = limitedSuccess || (limitedError && !shell) ? { ...options, expanded: true } : options;
           previous.result = base.renderResult?.(result, fullOptions, theme, {
             ...context, expanded: fullOptions.expanded, lastComponent: previous.result,
           });
           const component = previous.result ?? new Text(theme.fg("toolOutput", resultText(result)), 0, 0);
           if (!folded) return component;
           if (context.isError) {
-            if (!shell || !config.collapseCommandErrors) return component;
+            if (!limitedError) return component;
+            if (!shell) return limitLines(component, config.errorMaxLines, false, theme, context);
             const lines = resultText(result).trim().split("\n");
             const lastLine = lines[lines.length - 1].trim();
             const status = /^Command exited with code -?\d+$/.test(lastLine) ? lines.pop()!.trim() : undefined;

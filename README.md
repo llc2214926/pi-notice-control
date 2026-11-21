@@ -6,7 +6,7 @@
 
 ## 简体中文
 
-为 [Pi](https://pi.dev/) 提供通知过滤和工具输出折叠：隐藏重复提醒，精简 `write` / `edit` / `bash` 的显示，并限制命令失败输出的高度。
+为 [Pi](https://pi.dev/) 提供通知过滤和两级工具折叠：隐藏重复提醒，精简读写、搜索和命令显示，自动收起连续工具调用，并限制失败输出的高度。
 
 仅改变显示，不修改工具执行、返回给模型的结果、沙箱权限或系统代理。不注册模型工具，无需额外运行时依赖。
 
@@ -14,15 +14,16 @@
 
 - 按通知原文进行全文或包含匹配，可附加 `info`、`warning`、`error` 等级条件；首条规则命中生效，未命中原样放行。
 - 保留最近 100 条通知记录，支持临时暂停过滤、查看详情和重载 JSON。
-- 工具折叠时，`write` / `edit` 只显示工具名和路径；`bash` 只显示命令首行，多行命令附带省略行数。
-- 成功结果默认隐藏，也可配置最大显示行数；命令错误默认最多 5 行，保留 `Command exited with code N`。
+- 工具折叠时，`write` / `edit` 只显示工具名和路径；`bash` 只显示命令首行；`search` 系列只显示工具名和搜索词，多条查询附带省略数量。
+- 连续 `read`、连续 `edit/write`、其他连续工具调用分别自动折为摘要；展开组后仍可单独展开工具。
+- 成功结果默认隐藏，也可配置最大显示行数；shell、`agent_browser`、`fetch`、`search` 系列的错误默认最多 5 行，shell 错误保留 `Command exited with code N`。
 - 展开工具后恢复原渲染器的完整显示；配置无效时停止过滤和精简，避免沿用旧的隐藏策略。
 
 > 隐藏安全提醒不等于改变安全策略。示例只隐藏“允许所有域名”的通知，`allowedDomains: ["*"]` 仍然允许所有域名。
 
 ### 安装
 
-要求 **Pi >=1.5.0**，所有功能均不支持更早版本。Pi 直接加载 TypeScript，无需单独构建。
+要求 **Pi >=1.5.0**，不支持更早版本。二级折叠适配 Pi 1.5.2 的 TUI；其他布局无法接入时保留单条工具显示。Pi 直接加载 TypeScript，无需单独构建。
 
 #### 从 GitHub 全局安装（推荐）
 
@@ -44,7 +45,7 @@ Pi 会将包登记到个人 `settings.json` 的 `packages` 列表，默认对所
 }
 ```
 
-合并到已有配置，不要覆盖其他扩展或设置。保留同目录的 `index.ts`、`rules.ts` 和 `tool-display.ts`；日常使用无需安装开发依赖。两种安装方式选一种，避免加载多个副本。
+合并到已有配置，不要覆盖其他扩展或设置。保留同目录的 `index.ts`、`rules.ts`、`tool-display.ts` 和 `tool-groups.ts`；日常使用无需安装开发依赖。两种安装方式选一种，避免加载多个副本。
 
 #### 初始化与迁移
 
@@ -78,6 +79,7 @@ pi -e /absolute/path/to/pi-notice-control/index.ts
   "toolDisplay": {
     "enabled": true,
     "maxLines": 0,
+    "collapseConsecutive": true,
     "collapseCommandErrors": true,
     "errorMaxLines": 5
   },
@@ -103,12 +105,14 @@ pi -e /absolute/path/to/pi-notice-control/index.ts
 | --- | --- | --- |
 | `toolDisplay.enabled` | `true` | 工具精简开关；仅在提供 `toolDisplay` 对象时生效，`false` 恢复原显示 |
 | `toolDisplay.maxLines` | `0` | 折叠时成功结果最多显示的行数；`0` 完全隐藏结果，只保留调用行 |
-| `toolDisplay.collapseCommandErrors` | `true` | 是否折叠 `bash` / `powershell` 的失败输出；`false` 使用原渲染器显示错误 |
-| `toolDisplay.errorMaxLines` | `5` | 折叠命令错误的最大行数；至少 `1`，设为 `1` 时有退出码就只显示退出码 |
+| `toolDisplay.collapseConsecutive` | `true` | 按类别自动折叠至少两条连续工具调用；`false` 只保留单条折叠 |
+| `toolDisplay.collapseCommandErrors` | `true` | 折叠 shell、`agent_browser`、`fetch`、`search` 系列的失败输出；`false` 使用原渲染器显示错误 |
+| `toolDisplay.errorMaxLines` | `5` | 折叠错误的最大行数；至少 `1`，shell 有退出码时设为 `1` 就只显示退出码 |
 
 - 行数必须是安全整数，按终端自动换行后的**实际显示行**计算。上限包含省略提示和退出码，不包含调用行及 Pi 外框留白。行数太少时优先显示正文或退出码，不额外显示省略提示；窄终端中退出码缩写为 `exit N`，其他单行可能被截短。
-- 成功结果保留开头，shell 结果保留末尾；命令错误优先保留末尾，并固定显示已有的 `Command exited with code N`。超时、终止等没有退出码的失败保留末尾错误信息，不伪造退出码。
-- 其他工具的错误不主动隐藏或限行；调用行保留原渲染器的参数显示。
+- 成功结果保留开头，shell 结果保留末尾；shell 错误保留末尾和已有的 `Command exited with code N`。超时、终止等没有退出码的失败不伪造退出码。浏览器、抓取、搜索错误保留原渲染器输出的开头。
+- `search` 系列包括 `search`、`web_search`、`symbol_search`、`ast_grep_search` 等名称为 `search`、以 `_search` 结尾或以 `search_` 开头的工具；调用摘要支持 `query`、`queries`、`pattern`。没有调用渲染器时，展开显示完整 JSON 参数。
+- 错误折叠还覆盖 `agent_browser` 及 `agent_browser_*`、`fetch`、`fetch_*`、以 `_fetch` 结尾的工具和 `get_search_content`。其他工具的错误不主动隐藏或限行，其他调用保留原参数显示。
 - Ctrl+O（默认工具展开快捷键）或在支持鼠标的模式中点击单条工具可展开；展开后不受本扩展的行数限制。修改过快捷键时以 Pi 当前绑定为准。
 - 此功能只改变工具渲染，不截断模型结果或会话记录；宿主自身的结果截断仍然存在，超长输出按原提示读取完整文件。
 - 顶层 `enabled` 和 `/notices on|off` 只控制通知过滤，**不控制工具显示**。
@@ -125,6 +129,21 @@ $ npm run check
 检查失败
 Command exited with code 1
 ```
+
+#### 连续工具二级折叠
+
+提供 `toolDisplay` 后默认启用（已有工具配置也会启用），可用 `collapseConsecutive: false` 关闭。只折叠至少两条连续的同类别调用，类别为 `read`、`edit/write`（可混合）、其他工具。可见的聊天文字、思考、通知等会打断分组；仅包含工具调用的空助手消息不打断。
+
+```text
+▶ read × 3 · /tool-groups
+▶ edit/write × 4 · /tool-groups
+▶ 工具调用 × 2（web_search × 1、fetch_content × 1） · /tool-groups
+```
+
+- 在支持鼠标的模式下点击组标题，或运行 `/tool-groups` 选择一组展开/折叠。展开组只显示现有单条折叠行，不自动展开各条结果。
+- `/tool-groups expand` / `/tool-groups collapse` 批量开合组。Ctrl+O 仍可展开全部组和工具结果，再按一次收起。
+- 摘要实时显示运行中和失败数量；**失败工具仍显示在折叠组下方**，遵循单条错误行数配置，避免漏看错误。
+- 分组开合状态仅保存在当前界面；重建历史、切换会话或 `/reload` 后重新自动折叠。关闭二级折叠不会修改单条展开状态。
 
 #### 通知规则
 
@@ -152,8 +171,10 @@ Command exited with code 1
 | `/notices off` | 本次会话暂停通知过滤，仍然记录通知 |
 | `/notices on` | 本次会话开启通知过滤，需要有效配置和可用的通知入口 |
 | `/notices reload` | 重读全部配置，并用顶层 `enabled` 重置通知过滤的临时开关 |
+| `/tool-groups` | 选择连续工具组并切换展开/折叠 |
+| `/tool-groups expand` / `collapse` | 展开/折叠全部连续工具组 |
 
-命令不修改 JSON。修改配置用 `/notices reload`；工具设置在下一次渲染时应用，已显示的工具可切换展开状态刷新。修改扩展代码或安装路径请用 Pi 的 `/reload`。
+命令不修改 JSON。修改配置用 `/notices reload`，工具显示同步刷新；修改扩展代码或安装路径请用 Pi 的 `/reload`。
 
 ### 隐私与限制
 
@@ -161,7 +182,8 @@ Command exited with code 1
 - 查看通知详情时移除 ANSI 样式及部分控制字符；管理提示不进入历史。`/notices reload` 保留记录，Pi `/reload`、会话替换或退出清空记录。
 - 通知过滤支持 TUI / RPC 的 `ctx.ui.notify()`；工具折叠面向 TUI。无 UI 的 print/JSON 模式不接管。
 - 不过滤 Pi 内部提示、聊天消息、权限确认框、状态栏或桌面通知，不移除已显示的通知。`notify()` 没有来源信息，不能按来源扩展匹配。
-- 原生 `!` / `!!` 用户 shell 输出不是模型的 `bash` 工具调用，不在此折叠配置范围内。图片由 Pi 单独绘制，不受文本行数限制。没有可用工具渲染器的历史条目保持宿主显示。
+- 原生 `!` / `!!` 用户 shell 输出不是模型的 `bash` 工具调用，不在此折叠配置范围内。图片不受单条文本行数限制，但会随整组收起；展开组恢复显示。没有可用工具渲染器的历史条目保留单条宿主显示。
+- 二级折叠依赖 Pi 的 TUI 布局；无法接入时保留单条折叠，不影响执行。
 - 其他扩展若提前保存或替换通知入口，可能绕过过滤；其他工具渲染器也可能影响最终显示。宿主接口变化时可能需要适配。
 - 扩展自身的界面文案目前是中文；双语仅指本文档。
 
@@ -175,11 +197,11 @@ Command exited with code 1
 
 ## English
 
-Notification filtering and compact tool output for [Pi](https://pi.dev/). Hide repetitive notices, simplify `write` / `edit` / `bash` calls, and bound failed-command output without changing tool execution, model results, sandbox permissions, or system proxies.
+Notification filtering and two-level tool folding for [Pi](https://pi.dev/). Hide repetitive notices, simplify write/edit/bash/search calls, automatically group consecutive tools, and bound failed output without changing execution, model results, sandbox permissions, or system proxies.
 
 ### Installation
 
-Requires **Pi >=1.5.0** for all features; earlier versions are unsupported. No build or additional runtime dependency is required.
+Requires **Pi >=1.5.0**; earlier versions are unsupported. Group folding targets Pi 1.5.2's TUI; other layouts retain per-tool display if attachment is unavailable. No build or additional runtime dependency is required.
 
 ```sh
 pi install git:github.com/llc2214926/pi-notice-control
@@ -187,7 +209,7 @@ pi install git:github.com/llc2214926/pi-notice-control
 
 Pi adds the package to your personal `settings.json`. To filter `pi-sandbox` startup notices, place this package before `npm:pi-sandbox` in `packages`.
 
-For a local installation, add the absolute path to `index.ts` first in your personal `extensions` list. Keep `index.ts`, `rules.ts`, and `tool-display.ts` together. Choose one installation method and preserve existing settings.
+For a local installation, add the absolute path to `index.ts` first in your personal `extensions` list. Keep `index.ts`, `rules.ts`, `tool-display.ts`, and `tool-groups.ts` together. Choose one installation method and preserve existing settings.
 
 Save [notice-control.example.json](notice-control.example.json) as `~/.pi/agent/notice-control.json`, merging rather than overwriting existing rules. Disable the standalone `pi-minimal-write-edit.ts` if installed, then run `/reload` or restart Pi. Auto-discovered copies can be moved outside the extensions directory; remove explicit registrations if applicable.
 
@@ -210,6 +232,7 @@ Only the personal `notice-control.json` is read, never project rules. Use strict
   "toolDisplay": {
     "enabled": true,
     "maxLines": 0,
+    "collapseConsecutive": true,
     "collapseCommandErrors": true,
     "errorMaxLines": 5
   }
@@ -222,16 +245,27 @@ Only the personal `notice-control.json` is read, never project rules. Use strict
 | --- | --- | --- |
 | `enabled` | `true` | Enable compact tool rendering; `false` restores the original display |
 | `maxLines` | `0` | Maximum collapsed success-result lines; `0` hides the result entirely |
-| `collapseCommandErrors` | `true` | Fold failed `bash` / `powershell` results; `false` leaves errors to the original renderer |
-| `errorMaxLines` | `5` | Maximum collapsed command-error lines; minimum `1` preserves the exit status when present |
+| `collapseConsecutive` | `true` | Automatically group two or more consecutive calls by category; `false` keeps only per-tool folding |
+| `collapseCommandErrors` | `true` | Fold shell, browser, fetch, and search errors; `false` uses the original error renderer |
+| `errorMaxLines` | `5` | Maximum collapsed error lines; minimum `1` preserves a shell exit status when present |
 
 Limits count **wrapped terminal rows**, including the omission hint and exit status, excluding the call header and Pi's outer padding. Values must be safe integers (`maxLines >= 0`, `errorMaxLines >= 1`). When space is tight, content or exit status takes priority over the omission hint. Narrow terminals abbreviate the status to `exit N`; other single lines may be shortened.
 
-Collapsed `write` / `edit` calls show only the tool name and path. `bash` shows its first command line and an omitted-line count. Other calls keep their original parameter display. Success previews keep the beginning, shell previews keep the end. Failed commands pin an existing `Command exited with code N`; timeouts and other failures keep trailing error text without inventing an exit code. Other tools' errors are not additionally hidden or capped.
+Collapsed `write` / `edit` calls show the tool name and path. `bash` shows its first command line and an omitted-line count. Search tools (`search`, names ending in `_search` or starting with `search_`) show `query`, the first of `queries` plus a count, or `pattern`. Search tools without a call renderer show complete JSON arguments when expanded. Other calls retain their parameter display.
+
+Success previews keep the beginning, shell previews keep the end. Shell errors pin an existing `Command exited with code N`; other shell failures retain trailing errors without inventing an exit code. Browser/fetch/search errors keep the beginning of the original renderer output. Error folding covers `bash`, `powershell`, search tools, `agent_browser` / `agent_browser_*`, `fetch` / `fetch_*` / names ending in `_fetch`, and `get_search_content`. Other tools' errors are not additionally hidden or capped.
 
 Expand with Ctrl+O (the default binding) or click one tool where mouse support is available. Expanded views use the original renderer without this extension's line cap. Model results and session records are unchanged; Pi's own truncation and full-output file references still apply.
 
 The top-level `enabled` and `/notices on|off` control **notification filtering only**, independently of tool display.
+
+#### Consecutive tool groups
+
+Enabled by default when `toolDisplay` is present, including existing tool configurations. Set `collapseConsecutive: false` to disable it. Two or more consecutive calls are grouped as `read`, mixed `edit/write`, or other tools. Visible chat text, thinking, and notices break groups; empty tool-only assistant messages do not.
+
+Click a group title where mouse support is available, or use `/tool-groups` to choose and toggle one group. `/tool-groups expand` and `/tool-groups collapse` operate on all groups. Opening a group preserves each tool's independent expansion state. Ctrl+O still expands all groups and results, and collapses them on the next press.
+
+Summaries update running/failure counts. **Failed tools remain visible below collapsed groups**, using the per-tool error limits. Group state stays in the current UI only and resets when history is rebuilt, the session changes, or Pi reloads.
 
 #### Notification rules
 
@@ -256,8 +290,10 @@ Unknown fields, invalid values, duplicate IDs, or empty matches invalidate the e
 | `/notices off` | Pause notification filtering for this session; keep recording |
 | `/notices on` | Enable notification filtering with valid configuration and an available notification hook |
 | `/notices reload` | Reload all configuration and reset the notification switch to top-level `enabled` |
+| `/tool-groups` | Choose a consecutive-tool group and toggle it |
+| `/tool-groups expand` / `collapse` | Expand/collapse all consecutive-tool groups |
 
-Commands do not modify JSON. Tool settings apply on the next render; toggle an existing row's expansion to refresh it. Use Pi's `/reload` after changing extension code or installation paths.
+Commands do not modify JSON. Configuration reload refreshes tool display immediately. Use Pi's `/reload` after changing extension code or installation paths.
 
 ### Privacy and limitations
 
@@ -265,7 +301,8 @@ Commands do not modify JSON. Tool settings apply on the next render; toggle an e
 - Management notices do not enter history. Configuration reload preserves history; Pi reload, session replacement, and exit clear it.
 - Notification filtering supports TUI / RPC `ctx.ui.notify()`; tool folding targets TUI. Print/JSON modes without a UI are unaffected.
 - Internal Pi notices, chat messages, permission dialogs, status bars, and desktop notifications are not filtered. Already displayed notices cannot be removed. Source-extension matching is unavailable.
-- Native `!` / `!!` user shell output is not a model tool call and is not covered. Pi renders images separately from these text limits. Historical entries without an available tool renderer retain host rendering.
+- Native `!` / `!!` user shell output is not a model tool call and is not covered. Images are outside per-tool text limits but are hidden with a collapsed group and restored on expansion. Historical tools without an available renderer keep host per-tool rendering.
+- Group folding depends on Pi's TUI layout; if attachment is unavailable, per-tool display and execution remain intact.
 - Other extensions that replace or retain notification hooks may bypass filtering; other tool renderers may affect the final display. Future host API changes may require adaptation.
 - Hiding a sandbox warning does not change its security policy. The extension's own UI text is currently Chinese; only this README is bilingual.
 

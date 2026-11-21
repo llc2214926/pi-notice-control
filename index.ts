@@ -4,13 +4,14 @@ import { stripVTControlCharacters } from "node:util";
 import { getAgentDir, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { findRule, parseConfig, type Config, type NoticeType } from "./rules.ts";
 import { registerToolDisplay } from "./tool-display.ts";
+import { registerToolGroups } from "./tool-groups.ts";
 
 type Notice = { id: number; time: string; message: string; type: NoticeType; action: "hide" | "show"; rule?: string };
 const HISTORY_LIMIT = 100;
 const MESSAGE_LIMIT = 4096;
 
 function displayText(text: string): string {
-  return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  return stripVTControlCharacters(text).replace(/\p{Cc}/gu, (char) => char === "\t" || char === "\n" ? char : "");
 }
 
 export default function noticeControl(pi: ExtensionAPI): void {
@@ -23,6 +24,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
   let notify: ExtensionUIContext["notify"] | undefined;
 
   registerToolDisplay(pi, () => config?.toolDisplay);
+  const toolGroups = registerToolGroups(pi, () => config?.toolDisplay);
 
   function reloadConfig(): void {
     try {
@@ -33,9 +35,11 @@ export default function noticeControl(pi: ExtensionAPI): void {
       enabled = false;
       notify?.(`[notice-control] 配置加载失败，已停止过滤并恢复工具原始显示。${String(error)}`, "warning");
     }
+    toolGroups.refresh();
   }
 
   pi.on("session_start", (_event, ctx) => {
+    toolGroups.stop();
     restore?.();
     restore = undefined;
     notify = undefined;
@@ -89,9 +93,11 @@ export default function noticeControl(pi: ExtensionAPI): void {
       if (ui.notify === wrapper) ui.notify = original;
     };
     reloadConfig();
+    toolGroups.start(ctx);
   });
 
   pi.on("session_shutdown", () => {
+    toolGroups.stop();
     restore?.();
     restore = undefined;
     notify = undefined;
@@ -114,7 +120,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
       }
       if (command === "on" || command === "off") {
         enabled = command === "on" && config !== undefined && restore !== undefined;
-        notify(`[notice-control] 过滤${enabled ? "开启" : "关闭"}。${!config ? "请修复配置后运行 /notices reload。" : ""}`, "info");
+        notify(`[notice-control] 过滤${enabled ? "开启" : "关闭"}。${config ? "" : "请修复配置后运行 /notices reload。"}`, "info");
         return;
       }
       if (command) {

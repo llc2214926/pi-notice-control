@@ -8,7 +8,7 @@
   "pi": {
     "extensions": ["./index.ts"]
   },
-  "files": ["index.ts", "rules.ts", "tool-display.ts", "notice-control.example.json", "README.md"],
+  "files": ["index.ts", "rules.ts", "tool-display.ts", "tool-groups.ts", "notice-control.example.json", "README.md"],
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.5.0",
     "@earendil-works/pi-tui": ">=1.5.0"

@@ -3,6 +3,7 @@
   "toolDisplay": {
     "enabled": true,
     "maxLines": 0,
+    "collapseConsecutive": true,
     "collapseCommandErrors": true,
     "errorMaxLines": 5
   },
