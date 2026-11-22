@@ -141,12 +141,12 @@ Command exited with code 1
 ▶ read × 3 · /tool-groups
 ▶ edit/write × 4 · /tool-groups
 ▶ tool calls × 2（web_search × 1、fetch_content × 1） · /tool-groups
-▶ tool calls × 4 · 失败 3（agent_browser × 4） · /tool-groups
+▶ tool calls × 4 · failed 3（agent_browser × 4） · /tool-groups
 ```
 
 - 在支持鼠标的模式下点击组标题，或运行 `/tool-groups` 选择一组展开/折叠。展开组只显示现有单条折叠行，不自动展开各条结果。
 - `/tool-groups expand` / `/tool-groups collapse` 批量开合组。Ctrl+O 仍可展开全部组和工具结果，再按一次收起。
-- 摘要实时显示运行中和失败数量，有失败时标红；**折叠组会同时隐藏成功和失败工具的详情**。展开组后，异常仍遵循单条错误行数配置，可继续展开单条查看完整输出。
+- 摘要实时显示 `running` 和 `failed` 数量，有失败时标红；**折叠组会同时隐藏成功和失败工具的详情**。展开组后，异常仍遵循单条错误行数配置，可继续展开单条查看完整输出。
 - 分组开合状态仅保存在当前界面；重建历史、切换会话或 `/reload` 后重新自动折叠。关闭二级折叠不会修改单条展开状态。
 
 #### task process 三级折叠
@@ -161,7 +161,7 @@ Command exited with code 1
     read a.ts
     read b.ts
 todo（原生任务列表）
-▶ task process · 失败 1 · /task-process
+▶ task process · failed 1 · /task-process
 模型正文
 Reloaded keybindings, extensions, skills, prompts, themes, and context files
 ```
@@ -170,7 +170,7 @@ Reloaded keybindings, extensions, skills, prompts, themes, and context files
 - 外层三级保持当前对齐；二级（thinking、工具组等）额外缩进 2 列，一级单条工具额外缩进 4 列。窄屏自动减少缩进，避免超出宽度。
 - 点击标题，或用 `/task-process` 选择一组开合；`/task-process expand` / `collapse` 批量开合三级组。展开三级不改变内部二级组或单条工具的开合状态。
 - thinking 与工具组同属二级内容，**不另加 thinking 分组、不改写其显示策略**：保留 Pi 自带的标题、鼠标开合与 Ctrl+T。`todo` 不加入工具组，也不受本扩展的单条结果隐藏或行数限制。
-- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。任务摘要汇总工具的运行中和失败数量，有工具失败时标红。
+- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。任务摘要汇总工具的 `running` 和 `failed` 数量，有工具失败时标红。
 - 同一条模型消息中混合的正文与 thinking 也分别归类；正文不随过程隐藏。若宿主助手组件布局不兼容，保留该消息的原始显示。
 
 #### 通知规则
@@ -297,7 +297,7 @@ Enabled by default when `toolDisplay` is present, including existing tool config
 
 Click a group title where mouse support is available, or use `/tool-groups` to choose and toggle one group. `/tool-groups expand` and `/tool-groups collapse` operate on all groups. Opening a group preserves each tool's independent expansion state. Ctrl+O still expands all groups and results, and collapses them on the next press.
 
-Summaries update running/failure counts and turn red when a tool fails. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Group state stays in the current UI only and resets when history is rebuilt, the session changes, or Pi reloads.
+Summaries update `running` and `failed` counts and turn red when a tool fails. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Group state stays in the current UI only and resets when history is rebuilt, the session changes, or Pi reloads.
 
 #### task process (level three)
 
@@ -307,7 +307,7 @@ Only the `task process` heading row gets a dedicated gold-brown background in da
 
 Click the title or use `/task-process` to select and toggle a group. `/task-process expand` and `/task-process collapse` open or close all process groups without changing their inner tool expansion states.
 
-Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process headers summarize running/failed tools and turn red for tool failures.
+Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process headers summarize `running` and `failed` tools and turn red for tool failures.
 
 Mixed assistant text/thinking messages are split at their native text boundaries; text never disappears with the process. If the host assistant layout is incompatible, that message retains its original display.
 

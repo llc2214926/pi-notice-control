@@ -181,7 +181,7 @@ class FoldGroup extends Container {
       if (state.result?.isError) failed++;
     }
     const kind = this.kind === "process" ? "task process" : category(this.members[0].state.toolName);
-    const status = `${failed ? ` · 失败 ${failed}` : ""}${pending ? ` · 运行中 ${pending}` : ""}`;
+    const status = `${failed ? ` · failed ${failed}` : ""}${pending ? ` · running ${pending}` : ""}`;
     const tools = kind === "tool calls" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
     const count = this.kind === "tools" ? ` × ${this.members.length}` : "";
     return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${status}${tools}`)
