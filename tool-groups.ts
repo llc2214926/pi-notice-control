@@ -270,8 +270,11 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
         }
         let group = slots.get(boundarySlot);
         if (!group) {
+          const memberIds = processMembers.map(({ state }) => state.toolCallId);
           const id = persistentComponentId(boundary);
-          const stateKey = id && JSON.stringify(["process", id, boundarySlot]);
+          const stateKey = memberIds.length && memberIds.every((id): id is string => typeof id === "string" && id.length > 0)
+            ? JSON.stringify(["process-tools", ...memberIds])
+            : id && JSON.stringify(["process", id, boundarySlot]);
           group = new FoldGroup("process", stateKey ? (expandedById.get(stateKey) ?? defaultProcessExpanded) : defaultProcessExpanded, ui, tui,
             stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
           slots.set(boundarySlot, group);
