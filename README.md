@@ -15,7 +15,7 @@
 - 按通知原文进行全文或包含匹配，可附加 `info`、`warning`、`error` 等级条件；首条规则命中生效，未命中原样放行。
 - 保留最近 100 条通知记录，支持临时暂停过滤、查看详情和重载 JSON。
 - 工具折叠时，`write` / `edit` 只显示工具名和路径；`bash` 只显示命令首行；`search` 系列只显示工具名和搜索词，多条查询附带省略数量。
-- 用户输入、模型正文和 `todo` 保持可见；中间的 thinking、工具组、过程提示等统一折为 `task process`。thinking 和 `todo` 沿用原生显示与折叠。
+- 用户输入、模型正文、`todo` 和 Pi 原生状态提示保持可见；中间的 thinking、工具组等统一折为 `task process`。thinking 和 `todo` 沿用原生显示与折叠。
 - 连续 `read`、连续 `edit/write`、其他连续工具调用分别自动折为二级摘要；展开组后仍可单独展开工具。
 - 成功结果默认隐藏，也可配置最大显示行数；shell、`agent_browser`、`fetch`、`search` 系列的错误默认最多 5 行，shell 错误保留 `Command exited with code N`。
 - 展开工具后恢复原渲染器的完整显示；配置无效时停止过滤和精简，避免沿用旧的隐藏策略。
@@ -151,16 +151,23 @@ Command exited with code 1
 
 #### task process 三级折叠
 
-提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文和 `todo` 始终保留原生显示，作为分段边界**；中间所有内容一起收起。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容保持原样；纯留白或不可见内容不生成空组。
+提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文、`todo` 和 Pi 原生状态提示始终保留原生显示，作为分段边界**；中间的过程内容一起收起。重载、模型切换、警告等 Pi 提示不会随过程折叠。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容不折叠；纯留白或不可见内容不生成空组。
 
 ```text
 用户输入
-▶ task process · /task-process
+▼ task process · /task-process
+  thinking...
+  ▼ read × 2 · /tool-groups
+    read a.ts
+    read b.ts
 todo（原生任务列表）
 ▶ task process · 失败 1 · /task-process
 模型正文
+Reloaded keybindings, extensions, skills, prompts, themes, and context files
 ```
 
+- 只有 `task process` 标题一行使用独立背景：深色主题为金棕色，浅色主题为浅金色。展开内容保留各自背景，工具成功、失败状态色不变。
+- 外层三级保持当前对齐；二级（thinking、工具组等）额外缩进 2 列，一级单条工具额外缩进 4 列。窄屏自动减少缩进，避免超出宽度。
 - 点击标题，或用 `/task-process` 选择一组开合；`/task-process expand` / `collapse` 批量开合三级组。展开三级不改变内部二级组或单条工具的开合状态。
 - thinking 与工具组同属二级内容，**不另加 thinking 分组、不改写其显示策略**：保留 Pi 自带的标题、鼠标开合与 Ctrl+T。`todo` 不加入工具组，也不受本扩展的单条结果隐藏或行数限制。
 - Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。任务摘要汇总工具的运行中和失败数量，有工具失败时标红。
@@ -294,7 +301,9 @@ Summaries update running/failure counts and turn red when a tool fails. **Collap
 
 #### task process (level three)
 
-Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, and `todo` remain visible as boundaries**; everything between them collapses into `task process`, including an ongoing process that has not reached its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
+Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, `todo`, and native Pi status notices remain visible as boundaries**; process content between them collapses into `task process`. Reload, model-switch, and warning notices do not disappear with a process. An ongoing process can fold before its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
+
+Only the `task process` heading row gets a dedicated gold-brown background in dark themes and pale gold in light themes. Child backgrounds and native tool success/error colors are unchanged. Level three keeps its existing alignment; level-two thinking/tool groups add two columns of indentation, and level-one individual tools add four. Narrow terminals reduce indentation as needed.
 
 Click the title or use `/task-process` to select and toggle a group. `/task-process expand` and `/task-process collapse` open or close all process groups without changing their inner tool expansion states.
 

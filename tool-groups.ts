@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, MouseRegion, Spacer, Text, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Container, Markdown, MouseRegion, Spacer, Text, okhslColor, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDisplayConfig } from "./rules.ts";
 
 type ToolState = { toolName: string; isPartial: boolean; outputPad: number; argsPending: boolean; result?: { isError: boolean } };
@@ -24,6 +24,42 @@ function category(name: string): string {
 
 type GroupKind = "tools" | "process";
 type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number };
+const PROCESS_BACKGROUNDS = { dark: okhslColor(85, 0.65, 0.23), light: okhslColor(85, 0.65, 0.91) };
+
+class Indent extends Container {
+  private columns: number;
+
+  constructor(component: Component, columns: number) {
+    super();
+    this.columns = columns;
+    this.addChild(component);
+  }
+
+  private padding(width: number): number {
+    return Math.min(this.columns, Math.max(0, width - 1));
+  }
+
+  render(width: number): string[] {
+    const pad = this.padding(width);
+    const innerWidth = Math.max(1, width - pad);
+    return super.render(innerWidth).map((line) => " ".repeat(pad) + truncateToWidth(line, innerWidth));
+  }
+
+  handleMouse(event: TuiMouseEvent) {
+    const pad = this.padding(event.width);
+    if (event.x < pad || event.x >= event.width) return undefined;
+    return super.handleMouse({ ...event, x: event.x - pad, width: Math.max(1, event.width - pad) });
+  }
+}
+
+// shortcut: Pi exposes no notice-row type; use its 1.5 class name until a public type is available.
+function isPiNotice(component: Component): boolean {
+  if (!(component instanceof Text)) return false;
+  for (let prototype: object | null = Object.getPrototypeOf(component); prototype; prototype = Object.getPrototypeOf(prototype)) {
+    if (prototype.constructor?.name === "ThemedText") return true;
+  }
+  return false;
+}
 
 // Reuse native nodes and lines, including thinking mouse handlers and OSC transcript markers.
 function assistantParts(source: AssistantMessageComponent, width: number): AssistantPart[] {
@@ -38,41 +74,34 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
     return [{ component: source, body: true, slot: 0, outputPad: 1 }];
   }
   const outputPad = state.outputPad;
-  const hasBody = content.children.some((child) => child instanceof Markdown);
-  if (!hasBody || content.children.every((child) => child instanceof Spacer || child instanceof Markdown)) {
-    return [{ component: source, body: hasBody, slot: 0, outputPad }];
+  const bodyCount = content.children.filter((child) => child instanceof Markdown).length;
+  if (!bodyCount || content.children.every((child) => child instanceof Spacer || child instanceof Markdown)) {
+    return [{ component: source, body: bodyCount > 0, slot: bodyCount - 1, outputPad }];
   }
   const zoneStart = "\x1b]133;A\x07";
   const zoneEnd = "\x1b]133;B\x07\x1b]133;C\x07";
   const hasZone = lines[0].startsWith(zoneStart) && lines[lines.length - 1].startsWith(zoneEnd);
-  if (hasZone) {
-    lines[0] = lines[0].slice(zoneStart.length);
-    lines[lines.length - 1] = lines[lines.length - 1].slice(zoneEnd.length);
-  }
   const parts: AssistantPart[] = [];
   let children: Component[] = [];
-  let start = 0;
-  let end = 0;
   let slot = 0;
   for (const child of content.children) {
     children.push(child);
-    end += child.render(width).length;
     if (child instanceof Spacer) continue;
     const part = new Container();
     part.children = children;
-    const nativeLines = lines.slice(start, end);
     const render = part.render;
-    // Parts are rebuilt at each transcript width; render native children to retain mouse geometry.
-    part.render = (partWidth) => { render.call(part, partWidth); return nativeLines; };
     const body = child instanceof Markdown;
-    // Each visible body keeps a complete shell-integration zone when thinking is hidden.
-    if (hasZone && body && nativeLines.length) {
-      nativeLines[0] = zoneStart + nativeLines[0];
-      nativeLines[nativeLines.length - 1] += zoneEnd;
-    }
+    part.render = (partWidth) => {
+      // Render native nodes at the actual indented width to keep wrapping and mouse geometry intact.
+      const rendered = render.call(part, partWidth);
+      if (hasZone && body && rendered.length) {
+        rendered[0] = zoneStart + rendered[0];
+        rendered[rendered.length - 1] += zoneEnd;
+      }
+      return rendered;
+    };
     parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad });
     children = [];
-    start = end;
   }
   if (children.length) parts.push({ component: Object.assign(new Container(), { children }), body: false, slot: -1, outputPad });
   return parts;
@@ -102,8 +131,11 @@ class FoldGroup extends Container {
         let color: "toolTitle" | "warning" | "error" = "toolTitle";
         if (pending) color = "warning";
         if (failed) color = "error";
-        return [" ".repeat(pad) + truncateToWidth(this.ui.theme.fg(color, this.label())
-          + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : "tool-groups"}`), Math.max(0, width - pad))];
+        const line = " ".repeat(pad) + truncateToWidth(this.ui.theme.fg(color, this.label())
+          + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : "tool-groups"}`), Math.max(0, width - pad));
+        if (this.kind !== "process") return [line];
+        const bg = this.ui.theme.appearance === "light" ? PROCESS_BACKGROUNDS.light : PROCESS_BACKGROUNDS.dark;
+        return [this.ui.theme.style(line + " ".repeat(Math.max(0, width - visibleWidth(line))), { bg })];
       },
       invalidate() {},
     }, (event) => {
@@ -138,7 +170,10 @@ class FoldGroup extends Container {
   render(width: number): string[] {
     this.children = [new Spacer(1), this.header];
     if (this.expanded) {
-      for (const component of this.content) this.children.push(component);
+      for (const component of this.content) {
+        const columns = this.kind === "process" && component instanceof ToolExecutionComponent ? 4 : 2;
+        this.children.push(new Indent(component, columns));
+      }
     }
     return super.render(width);
   }
@@ -181,7 +216,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
     let processPad = 1;
     const add = (component: Component, members: Member[] = [], pad = 1) => {
       if (!config.collapseTaskProcess || !boundary) {
-        projection.addChild(component);
+        projection.addChild(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
         return;
       }
       const visible = members.length > 0 || (!(component instanceof Spacer)
@@ -192,6 +227,8 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
       for (const member of members) processMembers.push(member);
     };
     const flushProcess = () => {
+      const trailing: Component[] = [];
+      while (process[process.length - 1] instanceof Spacer) trailing.push(process.pop()!);
       if (processVisible && boundary) {
         let slots = byBoundary.get(boundary);
         if (!slots) {
@@ -211,6 +248,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
       } else {
         for (const component of process) projection.addChild(component);
       }
+      for (const component of trailing.reverse()) projection.addChild(component);
       process = [];
       processMembers = [];
       processVisible = false;
@@ -253,12 +291,6 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
         }
       }
       if (child instanceof AssistantMessageComponent) {
-        if (!config.collapseTaskProcess) {
-          if (!child.render(width).length) continue;
-          flush();
-          add(child);
-          continue;
-        }
         for (const part of assistantParts(child, width)) {
           flush();
           if (part.body) {
@@ -271,7 +303,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
         continue;
       }
       flush();
-      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent) {
+      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child)) {
         flushProcess();
         projection.addChild(child);
         boundary = child;
