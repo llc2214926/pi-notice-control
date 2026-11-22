@@ -3,17 +3,31 @@ import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessage
 import { Container, Markdown, MouseRegion, Spacer, Text, okhslColor, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDisplayConfig } from "./rules.ts";
 
-type ToolState = { toolName: string; isPartial: boolean; outputPad: number; argsPending: boolean; result?: { isError: boolean } };
+type ToolState = { toolName: string; toolCallId?: string; isPartial: boolean; outputPad: number; argsPending: boolean; result?: { isError: boolean } };
 type Member = { component: ToolExecutionComponent; state: ToolState };
 
 // shortcut: Pi has no transcript-group API; isolate and validate its 1.5 tool-row fields here.
 function toolState(component: ToolExecutionComponent): ToolState | undefined {
   // SAFETY: only host ToolExecutionComponent instances reach here; validate every private field before use.
   const value = component as unknown as ToolState;
-  if (typeof value.toolName !== "string" || typeof value.isPartial !== "boolean"
-    || !Number.isSafeInteger(value.outputPad) || value.outputPad < 0 || typeof value.argsPending !== "boolean"
+  if (typeof value.toolName !== "string" || (value.toolCallId !== undefined && typeof value.toolCallId !== "string")
+    || typeof value.isPartial !== "boolean" || !Number.isSafeInteger(value.outputPad) || value.outputPad < 0
+    || typeof value.argsPending !== "boolean"
     || (value.result !== undefined && typeof value.result?.isError !== "boolean")) return undefined;
   return value;
+}
+
+function persistentComponentId(component: Component): string | undefined {
+  if (component instanceof ToolExecutionComponent) {
+    const id = toolState(component)?.toolCallId;
+    return id ? `tool:${id}` : undefined;
+  }
+  if (component instanceof AssistantMessageComponent || component instanceof UserMessageComponent) {
+    // SAFETY: validated Pi message components carry the session entry ID in this private field.
+    const id = (component as unknown as { messageId?: unknown }).messageId;
+    return typeof id === "string" && id ? `message:${id}` : undefined;
+  }
+  return undefined;
 }
 
 function category(name: string): string {
@@ -23,7 +37,7 @@ function category(name: string): string {
 }
 
 type GroupKind = "tools" | "process";
-type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number };
+type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number; visible?: boolean };
 const PROCESS_BACKGROUNDS = { dark: okhslColor(85, 0.65, 0.23), light: okhslColor(85, 0.65, 0.91) };
 
 class Indent extends Container {
@@ -61,26 +75,31 @@ function isPiNotice(component: Component): boolean {
   return false;
 }
 
-// Reuse native nodes and lines, including thinking mouse handlers and OSC transcript markers.
+// Reuse native nodes, including thinking mouse handlers and OSC transcript markers.
 function assistantParts(source: AssistantMessageComponent, width: number): AssistantPart[] {
   // SAFETY: source is a host assistant row; validate its native container and padding before projecting.
-  const state = source as unknown as { contentContainer: unknown; outputPad: number };
-  const lines = source.render(width);
-  if (!lines.length) return [];
+  const state = source as unknown as { contentContainer: unknown; outputPad: number; hasToolCalls: unknown };
+  const fallback = () => source.render(width).length
+    ? [{ component: source, body: true, slot: 0, outputPad: 1 }]
+    : [];
   const content = state.contentContainer;
   if (!(content instanceof Container) || source.children.length !== 1 || source.children[0] !== content
     || !Number.isSafeInteger(state.outputPad) || state.outputPad < 0
+    || typeof state.hasToolCalls !== "boolean"
     || !content.children.every((child) => child instanceof Spacer || child instanceof Markdown || child instanceof MouseRegion || child instanceof Text)) {
-    return [{ component: source, body: true, slot: 0, outputPad: 1 }];
+    return fallback();
   }
   const outputPad = state.outputPad;
+  if (!content.children.length) return [];
   const bodyCount = content.children.filter((child) => child instanceof Markdown).length;
+  const visible = content.children.some((child) => !(child instanceof Spacer));
   if (!bodyCount || content.children.every((child) => child instanceof Spacer || child instanceof Markdown)) {
-    return [{ component: source, body: bodyCount > 0, slot: bodyCount - 1, outputPad }];
+    return [{ component: source, body: bodyCount > 0, slot: bodyCount - 1, outputPad, visible }];
   }
+  // Match the host's OSC predicate without rendering all Markdown just to inspect its markers.
   const zoneStart = "\x1b]133;A\x07";
   const zoneEnd = "\x1b]133;B\x07\x1b]133;C\x07";
-  const hasZone = lines[0].startsWith(zoneStart) && lines[lines.length - 1].startsWith(zoneEnd);
+  const hasZone = !state.hasToolCalls;
   const parts: AssistantPart[] = [];
   let children: Component[] = [];
   let slot = 0;
@@ -100,10 +119,15 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
       }
       return rendered;
     };
-    parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad });
+    parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad, visible: children.some((child) => !(child instanceof Spacer)) });
     children = [];
   }
-  if (children.length) parts.push({ component: Object.assign(new Container(), { children }), body: false, slot: -1, outputPad });
+  if (children.length) {
+    parts.push({
+      component: Object.assign(new Container(), { children }), body: false, slot: -1, outputPad,
+      visible: children.some((child) => !(child instanceof Spacer)),
+    });
+  }
   return parts;
 }
 
@@ -116,13 +140,15 @@ class FoldGroup extends Container {
   private header: MouseRegion;
   private ui: ExtensionUIContext;
   private tui: TUI;
+  private onExpanded?: (expanded: boolean) => void;
 
-  constructor(kind: GroupKind, expanded: boolean, ui: ExtensionUIContext, tui: TUI) {
+  constructor(kind: GroupKind, expanded: boolean, ui: ExtensionUIContext, tui: TUI, onExpanded?: (expanded: boolean) => void) {
     super();
     this.kind = kind;
     this.expanded = expanded;
     this.ui = ui;
     this.tui = tui;
+    this.onExpanded = onExpanded;
     this.header = new MouseRegion({
       render: (width) => {
         const pad = Math.min(this.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
@@ -162,8 +188,13 @@ class FoldGroup extends Container {
       .replace(/\p{Cc}/gu, " ");
   }
 
+  setExpanded(expanded: boolean): void {
+    this.expanded = expanded;
+    this.onExpanded?.(expanded);
+  }
+
   toggle(): void {
-    this.expanded = !this.expanded;
+    this.setExpanded(!this.expanded);
     this.tui.requestRender();
   }
 
@@ -185,6 +216,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
   const projection = new Container();
   let byFirst = new WeakMap<ToolExecutionComponent, FoldGroup>();
   let byBoundary = new WeakMap<Component, Map<number, FoldGroup>>();
+  const expandedById = new Map<string, boolean>();
   let groups: FoldGroup[] = [];
   let processes: FoldGroup[] = [];
   let globalExpanded = ui.getToolsExpanded();
@@ -199,6 +231,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
     if (expanded !== globalExpanded) {
       globalExpanded = expanded;
       defaultExpanded = defaultProcessExpanded = expanded;
+      expandedById.clear();
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
     }
@@ -214,13 +247,13 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
     let processMembers: Member[] = [];
     let processVisible = false;
     let processPad = 1;
-    const add = (component: Component, members: Member[] = [], pad = 1) => {
+    const add = (component: Component, members: Member[] = [], pad = 1, visibleHint?: boolean) => {
       if (!config.collapseTaskProcess || !boundary) {
         projection.addChild(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
         return;
       }
-      const visible = members.length > 0 || (!(component instanceof Spacer)
-        && component.render(width).some((line) => stripVTControlCharacters(line).trim()));
+      const visible = members.length > 0 || (visibleHint ?? (!(component instanceof Spacer)
+        && component.render(width).some((line) => stripVTControlCharacters(line).trim())));
       if (!processVisible && visible) processPad = pad;
       processVisible ||= visible;
       process.push(component);
@@ -237,7 +270,10 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
         }
         let group = slots.get(boundarySlot);
         if (!group) {
-          group = new FoldGroup("process", defaultProcessExpanded, ui, tui);
+          const id = persistentComponentId(boundary);
+          const stateKey = id && JSON.stringify(["process", id, boundarySlot]);
+          group = new FoldGroup("process", stateKey ? (expandedById.get(stateKey) ?? defaultProcessExpanded) : defaultProcessExpanded, ui, tui,
+            stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
           slots.set(boundarySlot, group);
         }
         group.content = process;
@@ -255,11 +291,13 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
     };
     const flush = () => {
       if (config.collapseConsecutive && run.length > 1) {
-        const first = run[0].component;
-        let group = byFirst.get(first);
+        const first = run[0];
+        const stateKey = first.state.toolCallId && JSON.stringify(["tools", first.state.toolCallId]);
+        let group = byFirst.get(first.component);
         if (!group) {
-          group = new FoldGroup("tools", defaultExpanded, ui, tui);
-          byFirst.set(first, group);
+          group = new FoldGroup("tools", stateKey ? (expandedById.get(stateKey) ?? defaultExpanded) : defaultExpanded, ui, tui,
+            stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
+          byFirst.set(first.component, group);
         }
         group.members = run;
         group.content = run.map(({ component }) => component);
@@ -298,7 +336,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
             projection.addChild(part.component);
             boundary = child;
             boundarySlot = part.slot;
-          } else add(part.component, [], part.outputPad);
+          } else add(part.component, [], part.outputPad, part.visible);
         }
         continue;
       }
@@ -323,7 +361,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
     setExpanded(expanded: boolean, kind: GroupKind = "tools") {
       if (kind === "process") defaultProcessExpanded = expanded;
       else defaultExpanded = expanded;
-      for (const group of kind === "process" ? processes : groups) group.expanded = expanded;
+      for (const group of kind === "process" ? processes : groups) group.setExpanded(expanded);
       tui.requestRender();
     },
     refresh() { chat.invalidate(); tui.requestRender(); },
@@ -331,6 +369,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
       disposed = true;
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
+      expandedById.clear();
       if (chat.render === render) chat.render = originalRender;
       if (chat.handleMouse === mouse) chat.handleMouse = originalMouse;
       projection.clear();
