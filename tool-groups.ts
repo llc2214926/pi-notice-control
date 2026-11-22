@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
-import { AssistantMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { Container, MouseRegion, Spacer, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, MouseRegion, Spacer, Text, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDisplayConfig } from "./rules.ts";
 
 type ToolState = { toolName: string; isPartial: boolean; outputPad: number; argsPending: boolean; result?: { isError: boolean } };
@@ -17,29 +17,93 @@ function toolState(component: ToolExecutionComponent): ToolState | undefined {
 }
 
 function category(name: string): string {
-  return name === "read" ? "read" : name === "edit" || name === "write" ? "edit/write" : "工具调用";
+  if (name === "read") return "read";
+  if (name === "edit" || name === "write") return "edit/write";
+  return "tool calls";
 }
 
-class ToolGroup extends Container {
+type GroupKind = "tools" | "process";
+type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number };
+
+// Reuse native nodes and lines, including thinking mouse handlers and OSC transcript markers.
+function assistantParts(source: AssistantMessageComponent, width: number): AssistantPart[] {
+  // SAFETY: source is a host assistant row; validate its native container and padding before projecting.
+  const state = source as unknown as { contentContainer: unknown; outputPad: number };
+  const lines = source.render(width);
+  if (!lines.length) return [];
+  const content = state.contentContainer;
+  if (!(content instanceof Container) || source.children.length !== 1 || source.children[0] !== content
+    || !Number.isSafeInteger(state.outputPad) || state.outputPad < 0
+    || !content.children.every((child) => child instanceof Spacer || child instanceof Markdown || child instanceof MouseRegion || child instanceof Text)) {
+    return [{ component: source, body: true, slot: 0, outputPad: 1 }];
+  }
+  const outputPad = state.outputPad;
+  const hasBody = content.children.some((child) => child instanceof Markdown);
+  if (!hasBody || content.children.every((child) => child instanceof Spacer || child instanceof Markdown)) {
+    return [{ component: source, body: hasBody, slot: 0, outputPad }];
+  }
+  const zoneStart = "\x1b]133;A\x07";
+  const zoneEnd = "\x1b]133;B\x07\x1b]133;C\x07";
+  const hasZone = lines[0].startsWith(zoneStart) && lines[lines.length - 1].startsWith(zoneEnd);
+  if (hasZone) {
+    lines[0] = lines[0].slice(zoneStart.length);
+    lines[lines.length - 1] = lines[lines.length - 1].slice(zoneEnd.length);
+  }
+  const parts: AssistantPart[] = [];
+  let children: Component[] = [];
+  let start = 0;
+  let end = 0;
+  let slot = 0;
+  for (const child of content.children) {
+    children.push(child);
+    end += child.render(width).length;
+    if (child instanceof Spacer) continue;
+    const part = new Container();
+    part.children = children;
+    const nativeLines = lines.slice(start, end);
+    const render = part.render;
+    // Parts are rebuilt at each transcript width; render native children to retain mouse geometry.
+    part.render = (partWidth) => { render.call(part, partWidth); return nativeLines; };
+    const body = child instanceof Markdown;
+    // Each visible body keeps a complete shell-integration zone when thinking is hidden.
+    if (hasZone && body && nativeLines.length) {
+      nativeLines[0] = zoneStart + nativeLines[0];
+      nativeLines[nativeLines.length - 1] += zoneEnd;
+    }
+    parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad });
+    children = [];
+    start = end;
+  }
+  if (children.length) parts.push({ component: Object.assign(new Container(), { children }), body: false, slot: -1, outputPad });
+  return parts;
+}
+
+class FoldGroup extends Container {
   members: Member[] = [];
+  content: Component[] = [];
+  outputPad = 1;
   expanded: boolean;
+  private kind: GroupKind;
   private header: MouseRegion;
   private ui: ExtensionUIContext;
   private tui: TUI;
 
-  constructor(expanded: boolean, ui: ExtensionUIContext, tui: TUI) {
+  constructor(kind: GroupKind, expanded: boolean, ui: ExtensionUIContext, tui: TUI) {
     super();
+    this.kind = kind;
     this.expanded = expanded;
     this.ui = ui;
     this.tui = tui;
     this.header = new MouseRegion({
       render: (width) => {
-        const pad = Math.min(this.members[0].state.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
+        const pad = Math.min(this.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
         const failed = this.members.some(({ state }) => state.result?.isError);
         const pending = this.members.some(({ state }) => state.isPartial);
-        const color = failed ? "error" : pending ? "warning" : "toolTitle";
+        let color: "toolTitle" | "warning" | "error" = "toolTitle";
+        if (pending) color = "warning";
+        if (failed) color = "error";
         return [" ".repeat(pad) + truncateToWidth(this.ui.theme.fg(color, this.label())
-          + this.ui.theme.fg("muted", " · /tool-groups"), Math.max(0, width - pad))];
+          + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : "tool-groups"}`), Math.max(0, width - pad))];
       },
       invalidate() {},
     }, (event) => {
@@ -58,10 +122,11 @@ class ToolGroup extends Container {
       if (state.isPartial) pending++;
       if (state.result?.isError) failed++;
     }
-    const kind = category(this.members[0].state.toolName);
+    const kind = this.kind === "process" ? "task process" : category(this.members[0].state.toolName);
     const status = `${failed ? ` · 失败 ${failed}` : ""}${pending ? ` · 运行中 ${pending}` : ""}`;
-    const tools = kind === "工具调用" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
-    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind} × ${this.members.length}${status}${tools}`)
+    const tools = kind === "tool calls" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
+    const count = this.kind === "tools" ? ` × ${this.members.length}` : "";
+    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${status}${tools}`)
       .replace(/\p{Cc}/gu, " ");
   }
 
@@ -72,9 +137,8 @@ class ToolGroup extends Container {
 
   render(width: number): string[] {
     this.children = [new Spacer(1), this.header];
-    // Errors stay visible even when successful siblings are grouped away.
-    for (const { component, state } of this.members) {
-      if (this.expanded || state.result?.isError) this.children.push(component);
+    if (this.expanded) {
+      for (const component of this.content) this.children.push(component);
     }
     return super.render(width);
   }
@@ -84,34 +148,88 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
   const originalRender = chat.render;
   const originalMouse = chat.handleMouse;
   const projection = new Container();
-  let byFirst = new WeakMap<ToolExecutionComponent, ToolGroup>();
-  let groups: ToolGroup[] = [];
+  let byFirst = new WeakMap<ToolExecutionComponent, FoldGroup>();
+  let byBoundary = new WeakMap<Component, Map<number, FoldGroup>>();
+  let groups: FoldGroup[] = [];
+  let processes: FoldGroup[] = [];
   let globalExpanded = ui.getToolsExpanded();
   let defaultExpanded = globalExpanded;
+  let defaultProcessExpanded = globalExpanded;
   let disposed = false;
-  const enabled = () => !disposed && getConfig()?.enabled && getConfig()?.collapseConsecutive;
+  const enabled = () => !disposed && getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess);
 
   const render = (width: number): string[] => {
     if (disposed) return originalRender.call(chat, width);
     const expanded = ui.getToolsExpanded();
     if (expanded !== globalExpanded) {
       globalExpanded = expanded;
-      defaultExpanded = expanded;
+      defaultExpanded = defaultProcessExpanded = expanded;
       byFirst = new WeakMap();
+      byBoundary = new WeakMap();
     }
     groups = [];
+    processes = [];
     projection.clear();
-    if (!enabled()) return originalRender.call(chat, width);
+    const config = getConfig();
+    if (!enabled() || !config) return originalRender.call(chat, width);
     let run: Member[] = [];
+    let boundary: Component | undefined;
+    let boundarySlot = 0;
+    let process: Component[] = [];
+    let processMembers: Member[] = [];
+    let processVisible = false;
+    let processPad = 1;
+    const add = (component: Component, members: Member[] = [], pad = 1) => {
+      if (!config.collapseTaskProcess || !boundary) {
+        projection.addChild(component);
+        return;
+      }
+      const visible = members.length > 0 || (!(component instanceof Spacer)
+        && component.render(width).some((line) => stripVTControlCharacters(line).trim()));
+      if (!processVisible && visible) processPad = pad;
+      processVisible ||= visible;
+      process.push(component);
+      for (const member of members) processMembers.push(member);
+    };
+    const flushProcess = () => {
+      if (processVisible && boundary) {
+        let slots = byBoundary.get(boundary);
+        if (!slots) {
+          slots = new Map();
+          byBoundary.set(boundary, slots);
+        }
+        let group = slots.get(boundarySlot);
+        if (!group) {
+          group = new FoldGroup("process", defaultProcessExpanded, ui, tui);
+          slots.set(boundarySlot, group);
+        }
+        group.content = process;
+        group.members = processMembers;
+        group.outputPad = processPad;
+        processes.push(group);
+        projection.addChild(group);
+      } else {
+        for (const component of process) projection.addChild(component);
+      }
+      process = [];
+      processMembers = [];
+      processVisible = false;
+    };
     const flush = () => {
-      if (run.length === 1) projection.addChild(run[0].component);
-      if (run.length > 1) {
+      if (config.collapseConsecutive && run.length > 1) {
         const first = run[0].component;
         let group = byFirst.get(first);
-        if (!group) byFirst.set(first, group = new ToolGroup(defaultExpanded, ui, tui));
+        if (!group) {
+          group = new FoldGroup("tools", defaultExpanded, ui, tui);
+          byFirst.set(first, group);
+        }
         group.members = run;
+        group.content = run.map(({ component }) => component);
+        group.outputPad = run[0].state.outputPad;
         groups.push(group);
-        projection.addChild(group);
+        add(group, run, group.outputPad);
+      } else {
+        for (const member of run) add(member.component, [member], member.state.outputPad);
       }
       run = [];
     };
@@ -121,17 +239,47 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
         if (state) {
           // Hidden rows still apply streamed argument updates and renderer lifecycle work.
           if (state.argsPending) child.render(width);
+          if (state.toolName === "todo") {
+            flush();
+            flushProcess();
+            projection.addChild(child);
+            boundary = child;
+            boundarySlot = 0;
+            continue;
+          }
           if (run.length && category(run[0].state.toolName) !== category(state.toolName)) flush();
           run.push({ component: child, state });
           continue;
         }
       }
-      // Tool-only assistant messages render nothing; visible text/thinking is a boundary.
-      if (child instanceof AssistantMessageComponent && child.render(width).length === 0) continue;
+      if (child instanceof AssistantMessageComponent) {
+        if (!config.collapseTaskProcess) {
+          if (!child.render(width).length) continue;
+          flush();
+          add(child);
+          continue;
+        }
+        for (const part of assistantParts(child, width)) {
+          flush();
+          if (part.body) {
+            flushProcess();
+            projection.addChild(part.component);
+            boundary = child;
+            boundarySlot = part.slot;
+          } else add(part.component, [], part.outputPad);
+        }
+        continue;
+      }
       flush();
-      projection.addChild(child);
+      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent) {
+        flushProcess();
+        projection.addChild(child);
+        boundary = child;
+        boundarySlot = 0;
+      } else add(child);
     }
     flush();
+    flushProcess();
     return projection.render(width);
   };
   const mouse: Container["handleMouse"] = (event) => enabled() ? projection.handleMouse(event) : originalMouse.call(chat, event);
@@ -139,20 +287,23 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
   chat.handleMouse = mouse;
 
   return {
-    list() { chat.render(tui.terminal.columns); return [...groups]; },
-    setExpanded(expanded: boolean) {
-      defaultExpanded = expanded;
-      for (const group of groups) group.expanded = expanded;
+    list(kind: GroupKind = "tools") { chat.render(tui.terminal.columns); return [...(kind === "process" ? processes : groups)]; },
+    setExpanded(expanded: boolean, kind: GroupKind = "tools") {
+      if (kind === "process") defaultProcessExpanded = expanded;
+      else defaultExpanded = expanded;
+      for (const group of kind === "process" ? processes : groups) group.expanded = expanded;
       tui.requestRender();
     },
     refresh() { chat.invalidate(); tui.requestRender(); },
     dispose() {
       disposed = true;
       byFirst = new WeakMap();
+      byBoundary = new WeakMap();
       if (chat.render === render) chat.render = originalRender;
       if (chat.handleMouse === mouse) chat.handleMouse = originalMouse;
       projection.clear();
       groups = [];
+      processes = [];
       tui.requestRender();
     },
   };
@@ -168,37 +319,42 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
     clearWidget = undefined;
   };
 
-  pi.registerCommand("tool-groups", {
-    description: "选择连续工具组并切换折叠；expand/collapse 展开或折叠全部组",
-    getArgumentCompletions: (prefix) => ["expand", "collapse"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
-    handler: async (args, ctx) => {
-      if (ctx.mode !== "tui") return;
-      const command = args.trim();
-      if (command && command !== "expand" && command !== "collapse") {
-        ctx.ui.notify("用法：/tool-groups [expand|collapse]", "info");
-        return;
-      }
-      if (!active || !getConfig()?.enabled || !getConfig()?.collapseConsecutive) {
-        ctx.ui.notify("二级折叠未启用，请检查 toolDisplay.enabled 和 toolDisplay.collapseConsecutive。", "info");
-        return;
-      }
-      const current = active;
-      const groups = current.list();
-      if (!groups.length) {
-        ctx.ui.notify("暂无连续工具组（至少两条同类别调用）。", "info");
-        return;
-      }
-      if (command) {
-        current.setExpanded(command === "expand");
-        return;
-      }
-      const choices = groups.map((group, index) => `#${index + 1} ${group.label()}`);
-      const selected = await ctx.ui.select("连续工具组（选择后展开/折叠）", choices);
-      if (active !== current || !selected) return;
-      const group = groups[choices.indexOf(selected)];
-      if (group && current.list().includes(group)) group.toggle();
-    },
-  });
+  for (const [name, kind, setting, title] of [
+    ["tool-groups", "tools", "collapseConsecutive", "连续工具组"],
+    ["task-process", "process", "collapseTaskProcess", "task process"],
+  ] as const) {
+    pi.registerCommand(name, {
+      description: `选择${title}并切换折叠；expand/collapse 展开或折叠全部组`,
+      getArgumentCompletions: (prefix) => ["expand", "collapse"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+      handler: async (args, ctx) => {
+        if (ctx.mode !== "tui") return;
+        const command = args.trim();
+        if (command && command !== "expand" && command !== "collapse") {
+          ctx.ui.notify(`用法：/${name} [expand|collapse]`, "info");
+          return;
+        }
+        if (!active || !getConfig()?.enabled || !getConfig()?.[setting]) {
+          ctx.ui.notify(`${title}折叠未启用，请检查 toolDisplay.enabled 和 toolDisplay.${setting}。`, "info");
+          return;
+        }
+        const current = active;
+        const groups = current.list(kind);
+        if (!groups.length) {
+          ctx.ui.notify(kind === "tools" ? "暂无连续工具组（至少两条同类别调用）。" : "暂无 task process。", "info");
+          return;
+        }
+        if (command) {
+          current.setExpanded(command === "expand", kind);
+          return;
+        }
+        const choices = groups.map((group, index) => `#${index + 1} ${group.label()}`);
+        const selected = await ctx.ui.select(`${title}（选择后展开/折叠）`, choices);
+        if (active !== current || !selected) return;
+        const group = groups[choices.indexOf(selected)];
+        if (group && current.list(kind).includes(group)) group.toggle();
+      },
+    });
+  }
 
   return {
     start(ctx: ExtensionContext) {
@@ -209,8 +365,8 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
         const document = tui.children[0];
         if (document instanceof Container && document.children.length === 3 && document.children.every((child) => child instanceof Container)) {
           active = attachToolGroups(document.children[2] as Container, ctx.ui, tui, getConfig);
-        } else if (getConfig()?.enabled && getConfig()?.collapseConsecutive) {
-          ctx.ui.notify("[notice-control] 无法接入当前 Pi 的二级折叠，保留单条工具显示。", "warning");
+        } else if (getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess)) {
+          ctx.ui.notify("[notice-control] 无法接入当前 Pi 的二/三级折叠，保留单条工具显示。", "warning");
         }
         return new Container();
       }, { placement: "belowEditor" });

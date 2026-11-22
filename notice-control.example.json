@@ -4,6 +4,7 @@
     "enabled": true,
     "maxLines": 0,
     "collapseConsecutive": true,
+    "collapseTaskProcess": true,
     "collapseCommandErrors": true,
     "errorMaxLines": 5
   },

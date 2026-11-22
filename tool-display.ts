@@ -67,7 +67,7 @@ function limitLines(component: Component, maxLines: number, keepEnd: boolean, th
 export function registerToolDisplay(pi: ExtensionAPI, getConfig: () => ToolDisplayConfig | undefined): void {
   pi.registerToolRenderer((toolName, next) => {
     const base = next();
-    if (!base) return undefined;
+    if (!base || toolName === "todo") return base;
     const search = isSearchTool(toolName);
     const compact = toolName === "write" || toolName === "edit" || toolName === "bash" || search;
     const shell = toolName === "bash" || toolName === "powershell";
