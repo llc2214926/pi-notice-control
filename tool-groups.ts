@@ -93,7 +93,7 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
     const body = child instanceof Markdown;
     part.render = (partWidth) => {
       // Render native nodes at the actual indented width to keep wrapping and mouse geometry intact.
-      const rendered = render.call(part, partWidth);
+      const rendered = [...render.call(part, partWidth)];
       if (hasZone && body && rendered.length) {
         rendered[0] = zoneStart + rendered[0];
         rendered[rendered.length - 1] += zoneEnd;
@@ -167,7 +167,7 @@ class FoldGroup extends Container {
     this.tui.requestRender();
   }
 
-  render(width: number): string[] {
+  render(width: number): ReturnType<Container["render"]> {
     this.children = [new Spacer(1), this.header];
     if (this.expanded) {
       for (const component of this.content) {
@@ -193,7 +193,7 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
   let disposed = false;
   const enabled = () => !disposed && getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess);
 
-  const render = (width: number): string[] => {
+  const render = (width: number): ReturnType<Container["render"]> => {
     if (disposed) return originalRender.call(chat, width);
     const expanded = ui.getToolsExpanded();
     if (expanded !== globalExpanded) {
