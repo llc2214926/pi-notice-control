@@ -147,7 +147,7 @@ Command exited with code 1
 - 在支持鼠标的模式下点击组标题，或运行 `/tool-groups` 选择一组展开/折叠。展开组只显示现有单条折叠行，不自动展开各条结果。
 - `/tool-groups expand` / `/tool-groups collapse` 批量开合组。Ctrl+O 仍可展开全部组和工具结果，再按一次收起。
 - 摘要实时显示 `running` 和 `failed` 数量，有失败时标红；**折叠组会同时隐藏成功和失败工具的详情**。展开组后，异常仍遵循单条错误行数配置，可继续展开单条查看完整输出。
-- 分组开合状态仅保存在当前界面；重建历史、切换会话或 `/reload` 后重新自动折叠。关闭二级折叠不会修改单条展开状态。
+- 分组折叠状态在当前 Pi 进程内按会话保存；含稳定消息/工具 ID 的组在历史重建和 `/reload` 后保留，切换会话或重启 Pi 后重置。关闭二级折叠不会修改单条展开状态。
 
 #### task process 三级折叠
 
@@ -297,7 +297,7 @@ Enabled by default when `toolDisplay` is present, including existing tool config
 
 Click a group title where mouse support is available, or use `/tool-groups` to choose and toggle one group. `/tool-groups expand` and `/tool-groups collapse` operate on all groups. Opening a group preserves each tool's independent expansion state. Ctrl+O still expands all groups and results, and collapses them on the next press.
 
-Summaries update `running` and `failed` counts and turn red when a tool fails. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Group state stays in the current UI only and resets when history is rebuilt, the session changes, or Pi reloads.
+Summaries update `running` and `failed` counts and turn red when a tool fails. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Fold state for groups with stable message/tool IDs is kept per session in memory, survives transcript rebuilds and `/reload`, and resets when the session changes or Pi restarts.
 
 #### task process (level three)
 

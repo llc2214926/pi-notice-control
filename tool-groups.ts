@@ -38,7 +38,18 @@ function category(name: string): string {
 
 type GroupKind = "tools" | "process";
 type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number; visible?: boolean };
+type FoldState = { sessionId: string; expandedById: Map<string, boolean> };
+const FOLD_STATE_KEY = Symbol.for("pi-notice-control.fold-state.v1");
 const PROCESS_BACKGROUNDS = { dark: okhslColor(85, 0.65, 0.23), light: okhslColor(85, 0.65, 0.91) };
+
+function foldStateFor(sessionId: string): Map<string, boolean> {
+  const shared = globalThis as typeof globalThis & { [key: symbol]: unknown };
+  const state = shared[FOLD_STATE_KEY] as FoldState | undefined;
+  if (state?.sessionId === sessionId) return state.expandedById;
+  const next = { sessionId, expandedById: new Map<string, boolean>() };
+  shared[FOLD_STATE_KEY] = next;
+  return next.expandedById;
+}
 
 class Indent extends Container {
   private columns: number;
@@ -210,13 +221,18 @@ class FoldGroup extends Container {
   }
 }
 
-export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: TUI, getConfig: () => ToolDisplayConfig | undefined) {
+export function attachToolGroups(
+  chat: Container,
+  ui: ExtensionUIContext,
+  tui: TUI,
+  getConfig: () => ToolDisplayConfig | undefined,
+  expandedById = new Map<string, boolean>(),
+) {
   const originalRender = chat.render;
   const originalMouse = chat.handleMouse;
   const projection = new Container();
   let byFirst = new WeakMap<ToolExecutionComponent, FoldGroup>();
   let byBoundary = new WeakMap<Component, Map<number, FoldGroup>>();
-  const expandedById = new Map<string, boolean>();
   let groups: FoldGroup[] = [];
   let processes: FoldGroup[] = [];
   let globalExpanded = ui.getToolsExpanded();
@@ -372,7 +388,6 @@ export function attachToolGroups(chat: Container, ui: ExtensionUIContext, tui: T
       disposed = true;
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
-      expandedById.clear();
       if (chat.render === render) chat.render = originalRender;
       if (chat.handleMouse === mouse) chat.handleMouse = originalMouse;
       projection.clear();
@@ -434,11 +449,12 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
     start(ctx: ExtensionContext) {
       stop();
       if (ctx.mode !== "tui") return;
+      const expandedById = foldStateFor(ctx.sessionManager.getSessionId());
       ctx.ui.setWidget("notice-control-tool-groups", (tui) => {
         // shortcut: Pi 1.5 mounts [header, resources, chat] as its first document container; replace with a public transcript API when available.
         const document = tui.children[0];
         if (document instanceof Container && document.children.length === 3 && document.children.every((child) => child instanceof Container)) {
-          active = attachToolGroups(document.children[2] as Container, ctx.ui, tui, getConfig);
+          active = attachToolGroups(document.children[2] as Container, ctx.ui, tui, getConfig, expandedById);
         } else if (getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess)) {
           ctx.ui.notify("[notice-control] 无法接入当前 Pi 的二/三级折叠，保留单条工具显示。", "warning");
         }
