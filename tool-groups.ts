@@ -295,7 +295,11 @@ export function attachToolGroups(
     let processVisible = false;
     let processPad = 1;
     const add = (component: Component, members: Member[] = [], pad = 1, visibleHint?: boolean) => {
-      if (inEarlierHistory || !config.collapseTaskProcess || !boundary) {
+      if (inEarlierHistory) {
+        append(component);
+        return;
+      }
+      if (!config.collapseTaskProcess || !boundary) {
         append(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
         return;
       }
@@ -425,6 +429,7 @@ export function attachToolGroups(
           histories.push(group);
           destination = projection;
           append(group);
+          append(new Spacer(1));
         }
         append(child);
         inEarlierHistory = false;
