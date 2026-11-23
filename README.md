@@ -161,7 +161,7 @@ Command exited with code 1
     read a.ts
     read b.ts
 todo（原生任务列表）
-▶ task process · failed 1 · /task-process
+▶ task process · 3 tool calls (read × 2, bash × 1) · thinking × 2 · failed 1 · /task-process
 模型正文
 Reloaded keybindings, extensions, skills, prompts, themes, and context files
 ```
@@ -170,7 +170,7 @@ Reloaded keybindings, extensions, skills, prompts, themes, and context files
 - 外层三级保持当前对齐；二级（thinking、工具组等）额外缩进 2 列，一级单条工具额外缩进 4 列。窄屏自动减少缩进，避免超出宽度。
 - 点击标题，或用 `/task-process` 选择一组开合；`/task-process expand` / `collapse` 批量开合三级组。展开三级不改变内部二级组或单条工具的开合状态。
 - thinking 与工具组同属二级内容，**不另加 thinking 分组、不改写其显示策略**：保留 Pi 自带的标题、鼠标开合与 Ctrl+T。`todo` 不加入工具组，也不受本扩展的单条结果隐藏或行数限制。
-- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。任务摘要汇总工具的 `running` 和 `failed` 数量，有工具失败时标红。
+- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。任务摘要显示工具调用总数、各工具名的数量及 thinking 块数量，并保留 `running` / `failed` 计数；有工具失败时标红。
 - 同一条模型消息中混合的正文与 thinking 也分别归类；正文不随过程隐藏。若宿主助手组件布局不兼容，保留该消息的原始显示。
 
 #### 通知规则
@@ -308,7 +308,7 @@ Only the `task process` heading row gets a dedicated gold-brown background in da
 
 Click the title or use `/task-process` to select and toggle a group. `/task-process expand` and `/task-process collapse` open or close all process groups without changing their inner tool expansion states.
 
-Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process headers summarize `running` and `failed` tools and turn red for tool failures.
+Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process headers show the total tool-call count, a per-tool breakdown (for example, `read × 2`), and the number of thinking blocks, alongside `running` / `failed` counts; failed processes turn red.
 
 Mixed assistant text/thinking messages are split at their native text boundaries; text never disappears with the process. If the host assistant layout is incompatible, that message retains its original display.
 

@@ -37,7 +37,7 @@ function category(name: string): string {
 }
 
 type GroupKind = "tools" | "process";
-type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number; visible?: boolean };
+type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number; visible?: boolean; thinkingCount?: number };
 type FoldState = { sessionId: string; expandedById: Map<string, boolean> };
 const FOLD_STATE_KEY = Symbol.for("pi-notice-control.fold-state.v1");
 const PROCESS_BACKGROUNDS = { dark: okhslColor(85, 0.65, 0.23), light: okhslColor(85, 0.65, 0.91) };
@@ -86,6 +86,13 @@ function isPiNotice(component: Component): boolean {
   return false;
 }
 
+function isPiCompactionSummary(component: Component): boolean {
+  for (let prototype: object | null = Object.getPrototypeOf(component); prototype; prototype = Object.getPrototypeOf(prototype)) {
+    if (prototype.constructor?.name === "CompactionSummaryMessageComponent") return true;
+  }
+  return false;
+}
+
 // Reuse native nodes, including thinking mouse handlers and OSC transcript markers.
 function assistantParts(source: AssistantMessageComponent, width: number): AssistantPart[] {
   // SAFETY: source is a host assistant row; validate its native container and padding before projecting.
@@ -105,7 +112,7 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
   const bodyCount = content.children.filter((child) => child instanceof Markdown).length;
   const visible = content.children.some((child) => !(child instanceof Spacer));
   if (!bodyCount || content.children.every((child) => child instanceof Spacer || child instanceof Markdown)) {
-    return [{ component: source, body: bodyCount > 0, slot: bodyCount - 1, outputPad, visible }];
+    return [{ component: source, body: bodyCount > 0, slot: bodyCount - 1, outputPad, visible, thinkingCount: content.children.filter((child) => child instanceof MouseRegion).length }];
   }
   // Match the host's OSC predicate without rendering all Markdown just to inspect its markers.
   const zoneStart = "\x1b]133;A\x07";
@@ -130,13 +137,15 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
       }
       return rendered;
     };
-    parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad, visible: children.some((child) => !(child instanceof Spacer)) });
+    const thinkingCount = children.filter((child) => child instanceof MouseRegion).length;
+    parts.push({ component: part, body, slot: body ? slot++ : -1, outputPad, visible: children.some((child) => !(child instanceof Spacer)), thinkingCount });
     children = [];
   }
   if (children.length) {
     parts.push({
       component: Object.assign(new Container(), { children }), body: false, slot: -1, outputPad,
       visible: children.some((child) => !(child instanceof Spacer)),
+      thinkingCount: children.filter((child) => child instanceof MouseRegion).length,
     });
   }
   return parts;
@@ -147,6 +156,7 @@ class FoldGroup extends Container {
   content: Component[] = [];
   outputPad = 1;
   expanded: boolean;
+  thinkingCount = 0;
   private kind: GroupKind;
   private header: MouseRegion;
   private ui: ExtensionUIContext;
@@ -192,10 +202,18 @@ class FoldGroup extends Container {
       if (state.result?.isError) failed++;
     }
     const kind = this.kind === "process" ? "task process" : category(this.members[0].state.toolName);
+    let processDetails = "";
+    if (this.kind === "process") {
+      if (this.members.length) processDetails = `${this.members.length} tool calls (${[...names].map(([name, count]) => `${name} × ${count}`).join(", ")})`;
+      if (this.thinkingCount) processDetails += `${processDetails ? " · " : ""}thinking × ${this.thinkingCount}`;
+    }
     const status = `${failed ? ` · failed ${failed}` : ""}${pending ? ` · running ${pending}` : ""}`;
     const tools = kind === "tool calls" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
     const count = this.kind === "tools" ? ` × ${this.members.length}` : "";
-    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${status}${tools}`)
+    let details = status;
+    if (this.kind === "process" && processDetails) details += ` · ${processDetails}`;
+    if (this.kind === "tools") details += tools;
+    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${details}`)
       .replace(/\p{Cc}/gu, " ");
   }
 
@@ -257,10 +275,12 @@ export function attachToolGroups(
     const config = getConfig();
     if (!enabled() || !config) return originalRender.call(chat, width);
     let run: Member[] = [];
-    let boundary: Component | undefined;
-    let boundarySlot = 0;
+    // Pi places the compaction summary after its retained transcript prefix; fold that prefix too.
+    let boundary: Component | undefined = chat.children.find(isPiCompactionSummary);
+    let boundarySlot = boundary ? -1 : 0;
     let process: Component[] = [];
     let processMembers: Member[] = [];
+    let processThinkingCount = 0;
     let processVisible = false;
     let processPad = 1;
     const add = (component: Component, members: Member[] = [], pad = 1, visibleHint?: boolean) => {
@@ -307,6 +327,7 @@ export function attachToolGroups(
         }
         group.content = process;
         group.members = processMembers;
+        group.thinkingCount = processThinkingCount;
         group.outputPad = processPad;
         processes.push(group);
         projection.addChild(group);
@@ -316,6 +337,7 @@ export function attachToolGroups(
       for (const component of trailing.reverse()) projection.addChild(component);
       process = [];
       processMembers = [];
+      processThinkingCount = 0;
       processVisible = false;
     };
     const flush = () => {
@@ -365,12 +387,15 @@ export function attachToolGroups(
             projection.addChild(part.component);
             boundary = child;
             boundarySlot = part.slot;
-          } else add(part.component, [], part.outputPad, part.visible);
+          } else {
+            add(part.component, [], part.outputPad, part.visible);
+            if (config.collapseTaskProcess && boundary) processThinkingCount += part.thinkingCount ?? 0;
+          }
         }
         continue;
       }
       flush();
-      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child)) {
+      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child) || isPiCompactionSummary(child)) {
         flushProcess();
         projection.addChild(child);
         boundary = child;
