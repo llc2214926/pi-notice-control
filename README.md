@@ -153,6 +153,8 @@ Command exited with code 1
 
 提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文、`todo` 和 Pi 原生状态提示始终保留原生显示，作为分段边界**；中间的过程内容一起收起。重载、模型切换、警告等 Pi 提示不会随过程折叠。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容不折叠；纯留白或不可见内容不生成空组。
 
+Pi compact 后保留在摘要之前的旧 transcript 会单独折为 `earlier history` 三级组；展开后仍保留二级连续工具组和一级单条工具折叠。使用 `/earlier-history` 选择或批量开合，不影响普通 `task process` 的状态。
+
 ```text
 用户输入
 ▼ task process · /task-process
@@ -203,6 +205,8 @@ Reloaded keybindings, extensions, skills, prompts, themes, and context files
 | `/tool-groups expand` / `collapse` | 展开/折叠全部连续工具组 |
 | `/task-process` | 选择一个三级过程组并切换展开/折叠 |
 | `/task-process expand` / `collapse` | 展开/折叠全部三级过程组 |
+| `/earlier-history` | 选择 compact 摘要前的旧历史并切换折叠 |
+| `/earlier-history expand` / `collapse` | 展开/折叠 compact 前的 earlier history |
 | `/fold-all` | 重新扫描聊天并折叠所有过程组、工具组和工具输出 |
 
 命令不修改 JSON。修改配置用 `/notices reload`，工具显示同步刷新；修改扩展代码或安装路径请用 Pi 的 `/reload`。
@@ -304,6 +308,8 @@ Summaries update `running` and `failed` counts and turn red when a tool fails. *
 
 Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, `todo`, and native Pi status notices remain visible as boundaries**; process content between them collapses into `task process`. Reload, model-switch, and warning notices do not disappear with a process. An ongoing process can fold before its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
 
+After Pi compacts a session, the retained transcript prefix before the compaction summary is grouped separately as `earlier history`. Expanding it preserves the level-two consecutive tool groups and level-one individual tool folds. Use `/earlier-history` to select or batch-toggle this group independently of regular `task process` groups.
+
 Only the `task process` heading row gets a dedicated gold-brown background in dark themes and pale gold in light themes. Child backgrounds and native tool success/error colors are unchanged. Level three keeps its existing alignment; level-two thinking/tool groups add two columns of indentation, and level-one individual tools add four. Narrow terminals reduce indentation as needed.
 
 Click the title or use `/task-process` to select and toggle a group. `/task-process expand` and `/task-process collapse` open or close all process groups without changing their inner tool expansion states.
@@ -339,6 +345,8 @@ Unknown fields, invalid values, duplicate IDs, or empty matches invalidate the e
 | `/tool-groups expand` / `collapse` | Expand/collapse all consecutive-tool groups |
 | `/task-process` | Select and toggle a level-three process group |
 | `/task-process expand` / `collapse` | Expand/collapse all process groups |
+| `/earlier-history` | Select and toggle the retained transcript before the compaction summary |
+| `/earlier-history expand` / `collapse` | Expand/collapse all earlier-history groups |
 | `/fold-all` | Re-scan the transcript and collapse all process groups, tool groups, and tool outputs |
 
 Commands do not modify JSON. Configuration reload refreshes tool display immediately. Use Pi's `/reload` after changing extension code or installation paths.

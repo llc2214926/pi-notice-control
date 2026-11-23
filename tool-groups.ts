@@ -22,7 +22,7 @@ function persistentComponentId(component: Component): string | undefined {
     const id = toolState(component)?.toolCallId;
     return id ? `tool:${id}` : undefined;
   }
-  if (component instanceof AssistantMessageComponent || component instanceof UserMessageComponent) {
+  if (component instanceof AssistantMessageComponent || component instanceof UserMessageComponent || isPiCompactionSummary(component)) {
     // SAFETY: validated Pi message components carry the session entry ID in this private field.
     const id = (component as unknown as { messageId?: unknown }).messageId;
     return typeof id === "string" && id ? `message:${id}` : undefined;
@@ -36,7 +36,7 @@ function category(name: string): string {
   return "tool calls";
 }
 
-type GroupKind = "tools" | "process";
+type GroupKind = "tools" | "process" | "history";
 type AssistantPart = { component: Component; body: boolean; slot: number; outputPad: number; visible?: boolean; thinkingCount?: number };
 type FoldState = { sessionId: string; expandedById: Map<string, boolean> };
 const FOLD_STATE_KEY = Symbol.for("pi-notice-control.fold-state.v1");
@@ -179,8 +179,8 @@ class FoldGroup extends Container {
         if (pending) color = "warning";
         if (failed) color = "error";
         const line = " ".repeat(pad) + truncateToWidth(this.ui.theme.fg(color, this.label())
-          + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : "tool-groups"}`), Math.max(0, width - pad));
-        if (this.kind !== "process") return [line];
+          + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : this.kind === "history" ? "earlier-history" : "tool-groups"}`), Math.max(0, width - pad));
+        if (this.kind === "tools") return [line];
         const bg = this.ui.theme.appearance === "light" ? PROCESS_BACKGROUNDS.light : PROCESS_BACKGROUNDS.dark;
         return [this.ui.theme.style(line + " ".repeat(Math.max(0, width - visibleWidth(line))), { bg })];
       },
@@ -201,9 +201,9 @@ class FoldGroup extends Container {
       if (state.isPartial) pending++;
       if (state.result?.isError) failed++;
     }
-    const kind = this.kind === "process" ? "task process" : category(this.members[0].state.toolName);
+    const kind = this.kind === "process" ? "task process" : this.kind === "history" ? "earlier history" : category(this.members[0].state.toolName);
     let processDetails = "";
-    if (this.kind === "process") {
+    if (this.kind !== "tools") {
       if (this.members.length) processDetails = `${this.members.length} tool calls (${[...names].map(([name, count]) => `${name} × ${count}`).join(", ")})`;
       if (this.thinkingCount) processDetails += `${processDetails ? " · " : ""}thinking × ${this.thinkingCount}`;
     }
@@ -211,7 +211,7 @@ class FoldGroup extends Container {
     const tools = kind === "tool calls" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
     const count = this.kind === "tools" ? ` × ${this.members.length}` : "";
     let details = status;
-    if (this.kind === "process" && processDetails) details += ` · ${processDetails}`;
+    if (this.kind !== "tools" && processDetails) details += ` · ${processDetails}`;
     if (this.kind === "tools") details += tools;
     return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${details}`)
       .replace(/\p{Cc}/gu, " ");
@@ -231,7 +231,7 @@ class FoldGroup extends Container {
     this.children = [new Spacer(1), this.header];
     if (this.expanded) {
       for (const component of this.content) {
-        const columns = this.kind === "process" && component instanceof ToolExecutionComponent ? 4 : 2;
+        const columns = this.kind !== "tools" && component instanceof ToolExecutionComponent ? 4 : 2;
         this.children.push(new Indent(component, columns));
       }
     }
@@ -251,11 +251,14 @@ export function attachToolGroups(
   const projection = new Container();
   let byFirst = new WeakMap<ToolExecutionComponent, FoldGroup>();
   let byBoundary = new WeakMap<Component, Map<number, FoldGroup>>();
+  let byHistory = new WeakMap<Component, FoldGroup>();
   let groups: FoldGroup[] = [];
   let processes: FoldGroup[] = [];
+  let histories: FoldGroup[] = [];
   let globalExpanded = ui.getToolsExpanded();
   let defaultExpanded = globalExpanded;
   let defaultProcessExpanded = globalExpanded;
+  let defaultHistoryExpanded = globalExpanded;
   let disposed = false;
   const enabled = () => !disposed && getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess);
 
@@ -264,28 +267,36 @@ export function attachToolGroups(
     const expanded = ui.getToolsExpanded();
     if (expanded !== globalExpanded) {
       globalExpanded = expanded;
-      defaultExpanded = defaultProcessExpanded = expanded;
+      defaultExpanded = defaultProcessExpanded = defaultHistoryExpanded = expanded;
       expandedById.clear();
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
+      byHistory = new WeakMap();
     }
     groups = [];
     processes = [];
+    histories = [];
     projection.clear();
     const config = getConfig();
+    const historyContent = new Container();
+    const compactionSummary = chat.children.find(isPiCompactionSummary);
+    let inEarlierHistory = Boolean(config?.collapseTaskProcess && compactionSummary);
+    let destination = inEarlierHistory ? historyContent : projection;
+    const append = (component: Component) => destination.addChild(component);
+    const historyMembers: Member[] = [];
+    let historyThinkingCount = 0;
     if (!enabled() || !config) return originalRender.call(chat, width);
     let run: Member[] = [];
-    // Pi places the compaction summary after its retained transcript prefix; fold that prefix too.
-    let boundary: Component | undefined = chat.children.find(isPiCompactionSummary);
-    let boundarySlot = boundary ? -1 : 0;
+    let boundary: Component | undefined;
+    let boundarySlot = 0;
     let process: Component[] = [];
     let processMembers: Member[] = [];
     let processThinkingCount = 0;
     let processVisible = false;
     let processPad = 1;
     const add = (component: Component, members: Member[] = [], pad = 1, visibleHint?: boolean) => {
-      if (!config.collapseTaskProcess || !boundary) {
-        projection.addChild(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
+      if (inEarlierHistory || !config.collapseTaskProcess || !boundary) {
+        append(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
         return;
       }
       const visible = members.length > 0 || (visibleHint ?? (!(component instanceof Spacer)
@@ -298,7 +309,7 @@ export function attachToolGroups(
     const flushProcess = () => {
       const trailing: Component[] = [];
       while (process[process.length - 1] instanceof Spacer) trailing.push(process.pop()!);
-      if (processVisible && boundary) {
+      if (processVisible && boundary && !inEarlierHistory) {
         let slots = byBoundary.get(boundary);
         if (!slots) {
           slots = new Map();
@@ -330,17 +341,18 @@ export function attachToolGroups(
         group.thinkingCount = processThinkingCount;
         group.outputPad = processPad;
         processes.push(group);
-        projection.addChild(group);
+        append(group);
       } else {
-        for (const component of process) projection.addChild(component);
+        for (const component of process) append(component);
       }
-      for (const component of trailing.reverse()) projection.addChild(component);
+      for (const component of trailing.reverse()) append(component);
       process = [];
       processMembers = [];
       processThinkingCount = 0;
       processVisible = false;
     };
     const flush = () => {
+      if (inEarlierHistory) historyMembers.push(...run);
       if (config.collapseConsecutive && run.length > 1) {
         const first = run[0];
         const stateKey = first.state.toolCallId && JSON.stringify(["tools", first.state.toolCallId]);
@@ -369,7 +381,7 @@ export function attachToolGroups(
           if (state.toolName === "todo") {
             flush();
             flushProcess();
-            projection.addChild(child);
+            append(child);
             boundary = child;
             boundarySlot = 0;
             continue;
@@ -384,20 +396,46 @@ export function attachToolGroups(
           flush();
           if (part.body) {
             flushProcess();
-            projection.addChild(part.component);
+            append(part.component);
             boundary = child;
             boundarySlot = part.slot;
           } else {
             add(part.component, [], part.outputPad, part.visible);
-            if (config.collapseTaskProcess && boundary) processThinkingCount += part.thinkingCount ?? 0;
+            if (inEarlierHistory) historyThinkingCount += part.thinkingCount ?? 0;
+            else if (config.collapseTaskProcess && boundary) processThinkingCount += part.thinkingCount ?? 0;
           }
         }
         continue;
       }
-      flush();
-      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child) || isPiCompactionSummary(child)) {
+      if (isPiCompactionSummary(child)) {
+        flush();
         flushProcess();
-        projection.addChild(child);
+        if (inEarlierHistory && historyContent.children.length) {
+          const id = persistentComponentId(child);
+          const stateKey = id && JSON.stringify(["history", id]);
+          let group = byHistory.get(child);
+          if (!group) {
+            group = new FoldGroup("history", stateKey ? (expandedById.get(stateKey) ?? defaultHistoryExpanded) : defaultHistoryExpanded,
+              ui, tui, stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
+            byHistory.set(child, group);
+          }
+          group.content = historyContent.children;
+          group.members = historyMembers;
+          group.thinkingCount = historyThinkingCount;
+          histories.push(group);
+          destination = projection;
+          append(group);
+        }
+        append(child);
+        inEarlierHistory = false;
+        boundary = child;
+        boundarySlot = 0;
+        continue;
+      }
+      flush();
+      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child)) {
+        flushProcess();
+        append(child);
         boundary = child;
         boundarySlot = 0;
       } else add(child);
@@ -411,25 +449,27 @@ export function attachToolGroups(
   chat.handleMouse = mouse;
 
   return {
-    list(kind: GroupKind = "tools") { chat.render(tui.terminal.columns); return [...(kind === "process" ? processes : groups)]; },
+    list(kind: GroupKind = "tools") { chat.render(tui.terminal.columns); return [...(kind === "process" ? processes : kind === "history" ? histories : groups)]; },
     setExpanded(expanded: boolean, kind: GroupKind = "tools") {
       if (kind === "process") defaultProcessExpanded = expanded;
+      else if (kind === "history") defaultHistoryExpanded = expanded;
       else defaultExpanded = expanded;
-      for (const group of kind === "process" ? processes : groups) group.setExpanded(expanded);
+      for (const group of kind === "process" ? processes : kind === "history" ? histories : groups) group.setExpanded(expanded);
       tui.requestRender();
     },
     collapseAll() {
       ui.setToolsExpanded(false);
       globalExpanded = false;
-      defaultExpanded = defaultProcessExpanded = false;
+      defaultExpanded = defaultProcessExpanded = defaultHistoryExpanded = false;
       expandedById.clear();
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
+      byHistory = new WeakMap();
       for (const child of chat.children) {
         if (child instanceof ToolExecutionComponent) child.setExpanded(false);
       }
       chat.render(tui.terminal.columns);
-      for (const group of [...groups, ...processes]) group.setExpanded(false);
+      for (const group of [...groups, ...processes, ...histories]) group.setExpanded(false);
       tui.requestRender();
     },
     refresh() { chat.invalidate(); tui.requestRender(); },
@@ -437,11 +477,13 @@ export function attachToolGroups(
       disposed = true;
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
+      byHistory = new WeakMap();
       if (chat.render === render) chat.render = originalRender;
       if (chat.handleMouse === mouse) chat.handleMouse = originalMouse;
       projection.clear();
       groups = [];
       processes = [];
+      histories = [];
       tui.requestRender();
     },
   };
@@ -460,6 +502,7 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
   for (const [name, kind, setting, title] of [
     ["tool-groups", "tools", "collapseConsecutive", "连续工具组"],
     ["task-process", "process", "collapseTaskProcess", "task process"],
+    ["earlier-history", "history", "collapseTaskProcess", "earlier history"],
   ] as const) {
     pi.registerCommand(name, {
       description: `选择${title}并切换折叠；expand/collapse 展开或折叠全部组`,
@@ -478,7 +521,7 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
         const current = active;
         const groups = current.list(kind);
         if (!groups.length) {
-          ctx.ui.notify(kind === "tools" ? "暂无连续工具组（至少两条同类别调用）。" : "暂无 task process。", "info");
+          ctx.ui.notify(kind === "tools" ? "暂无连续工具组（至少两条同类别调用）。" : kind === "process" ? "暂无 task process。" : "暂无 earlier history。", "info");
           return;
         }
         if (command) {
