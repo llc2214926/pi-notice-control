@@ -287,11 +287,21 @@ export function attachToolGroups(
         let group = slots.get(boundarySlot);
         if (!group) {
           const memberIds = processMembers.map(({ state }) => state.toolCallId);
+          const completeMemberIds = memberIds.length && memberIds.every((memberId) => memberId && memberId.length > 0)
+            ? memberIds
+            : undefined;
           const id = persistentComponentId(boundary);
-          const stateKey = memberIds.length && memberIds.every((id): id is string => typeof id === "string" && id.length > 0)
-            ? JSON.stringify(["process-tools", ...memberIds])
-            : id && JSON.stringify(["process", id, boundarySlot]);
-          group = new FoldGroup("process", stateKey ? (expandedById.get(stateKey) ?? defaultProcessExpanded) : defaultProcessExpanded, ui, tui,
+          // Boundary identity survives later tool calls; warning-only boundaries fall back to the first tool ID.
+          const firstMemberId = memberIds.find((memberId) => memberId && memberId.length > 0);
+          const stateKey = id
+            ? JSON.stringify(["process", id, boundarySlot])
+            : firstMemberId && JSON.stringify(["process-tools", firstMemberId]);
+          const previousKey = completeMemberIds && JSON.stringify(["process-tools", ...completeMemberIds]);
+          let expanded = defaultProcessExpanded;
+          const saved = stateKey ? expandedById.get(stateKey) : undefined;
+          if (saved !== undefined) expanded = saved;
+          else if (previousKey) expanded = expandedById.get(previousKey) ?? expanded;
+          group = new FoldGroup("process", expanded, ui, tui,
             stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
           slots.set(boundarySlot, group);
         }
