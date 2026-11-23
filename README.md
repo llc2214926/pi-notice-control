@@ -203,6 +203,7 @@ Reloaded keybindings, extensions, skills, prompts, themes, and context files
 | `/tool-groups expand` / `collapse` | 展开/折叠全部连续工具组 |
 | `/task-process` | 选择一个三级过程组并切换展开/折叠 |
 | `/task-process expand` / `collapse` | 展开/折叠全部三级过程组 |
+| `/fold-all` | 重新扫描聊天并折叠所有过程组、工具组和工具输出 |
 
 命令不修改 JSON。修改配置用 `/notices reload`，工具显示同步刷新；修改扩展代码或安装路径请用 Pi 的 `/reload`。
 
@@ -338,6 +339,7 @@ Unknown fields, invalid values, duplicate IDs, or empty matches invalidate the e
 | `/tool-groups expand` / `collapse` | Expand/collapse all consecutive-tool groups |
 | `/task-process` | Select and toggle a level-three process group |
 | `/task-process expand` / `collapse` | Expand/collapse all process groups |
+| `/fold-all` | Re-scan the transcript and collapse all process groups, tool groups, and tool outputs |
 
 Commands do not modify JSON. Configuration reload refreshes tool display immediately. Use Pi's `/reload` after changing extension code or installation paths.
 

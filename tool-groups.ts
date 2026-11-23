@@ -383,6 +383,20 @@ export function attachToolGroups(
       for (const group of kind === "process" ? processes : groups) group.setExpanded(expanded);
       tui.requestRender();
     },
+    collapseAll() {
+      ui.setToolsExpanded(false);
+      globalExpanded = false;
+      defaultExpanded = defaultProcessExpanded = false;
+      expandedById.clear();
+      byFirst = new WeakMap();
+      byBoundary = new WeakMap();
+      for (const child of chat.children) {
+        if (child instanceof ToolExecutionComponent) child.setExpanded(false);
+      }
+      chat.render(tui.terminal.columns);
+      for (const group of [...groups, ...processes]) group.setExpanded(false);
+      tui.requestRender();
+    },
     refresh() { chat.invalidate(); tui.requestRender(); },
     dispose() {
       disposed = true;
@@ -445,11 +459,24 @@ export function registerToolGroups(pi: ExtensionAPI, getConfig: () => ToolDispla
     });
   }
 
+  pi.registerCommand("fold-all", {
+    description: "重新计算聊天分组并折叠所有工具输出",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") return;
+      if (!active || !getConfig()?.enabled) {
+        ctx.ui.notify("工具折叠未启用，请检查 toolDisplay.enabled。", "info");
+        return;
+      }
+      active.collapseAll();
+    },
+  });
+
   return {
     start(ctx: ExtensionContext) {
       stop();
       if (ctx.mode !== "tui") return;
-      const expandedById = foldStateFor(ctx.sessionManager.getSessionId());
+      const sessionId = ctx.sessionManager?.getSessionId?.();
+      const expandedById = sessionId ? foldStateFor(sessionId) : new Map<string, boolean>();
       ctx.ui.setWidget("notice-control-tool-groups", (tui) => {
         // shortcut: Pi 1.5 mounts [header, resources, chat] as its first document container; replace with a public transcript API when available.
         const document = tui.children[0];
