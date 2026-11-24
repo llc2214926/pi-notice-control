@@ -252,6 +252,8 @@ export function attachToolGroups(
   let byFirst = new WeakMap<ToolExecutionComponent, FoldGroup>();
   let byBoundary = new WeakMap<Component, Map<number, FoldGroup>>();
   let byHistory = new WeakMap<Component, FoldGroup>();
+  // Apply defaults once per compaction entry; later renders must not undo manual nested toggles.
+  const historyDefaultsApplied = new WeakSet<Component>();
   let groups: FoldGroup[] = [];
   let processes: FoldGroup[] = [];
   let histories: FoldGroup[] = [];
@@ -415,10 +417,17 @@ export function attachToolGroups(
         flush();
         flushProcess();
         if (inEarlierHistory && historyContent.children.length) {
-          const id = persistentComponentId(child);
-          const stateKey = id && JSON.stringify(["history", id]);
           let group = byHistory.get(child);
           if (!group) {
+            if (!historyDefaultsApplied.has(child)) {
+              for (const { component } of historyMembers) component.setExpanded(false);
+              for (const component of historyContent.children) {
+                if (component instanceof FoldGroup) component.setExpanded(false);
+              }
+              historyDefaultsApplied.add(child);
+            }
+            const id = persistentComponentId(child);
+            const stateKey = id && JSON.stringify(["history", id]);
             group = new FoldGroup("history", stateKey ? (expandedById.get(stateKey) ?? defaultHistoryExpanded) : defaultHistoryExpanded,
               ui, tui, stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
             byHistory.set(child, group);
