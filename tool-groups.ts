@@ -1,9 +1,10 @@
 import { stripVTControlCharacters } from "node:util";
-import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, MouseRegion, Spacer, Text, okhslColor, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDisplayConfig } from "./rules.ts";
+import { toolDisplayRenderer } from "./tool-display.ts";
 
-type ToolState = { toolName: string; toolCallId?: string; isPartial: boolean; outputPad: number; argsPending: boolean; result?: { isError: boolean } };
+type ToolState = { toolName: string; toolCallId?: string; isPartial: boolean; outputPad: number; argsPending: boolean; expanded: boolean; toolDefinition?: ToolRenderers; result?: { isError: boolean } };
 type Member = { component: ToolExecutionComponent; state: ToolState };
 
 // shortcut: Pi has no transcript-group API; isolate and validate its 1.5 tool-row fields here.
@@ -12,7 +13,8 @@ function toolState(component: ToolExecutionComponent): ToolState | undefined {
   const value = component as unknown as ToolState;
   if (typeof value.toolName !== "string" || (value.toolCallId !== undefined && typeof value.toolCallId !== "string")
     || typeof value.isPartial !== "boolean" || !Number.isSafeInteger(value.outputPad) || value.outputPad < 0
-    || typeof value.argsPending !== "boolean"
+    || typeof value.argsPending !== "boolean" || typeof value.expanded !== "boolean"
+    || (value.toolDefinition !== undefined && (!value.toolDefinition || typeof value.toolDefinition !== "object"))
     || (value.result !== undefined && typeof value.result?.isError !== "boolean")) return undefined;
   return value;
 }
@@ -68,9 +70,10 @@ class Indent extends Container {
     const pad = this.padding(width);
     const innerWidth = Math.max(1, width - pad);
     return super.render(innerWidth).map((line) => {
-      // Pi consumes OSC transcript markers only at the line start, before indentation.
-      const prefix = line.match(/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/)?.[0] ?? "";
-      return prefix + " ".repeat(pad) + truncateToWidth(line.slice(prefix.length), innerWidth);
+      // Scrollbar anchors can precede Pi's markers; keep OSC133 before both anchors and indentation.
+      let prefix = "";
+      const content = line.replace(/\x1b\]133;[ABC](?:\x07|\x1b\\)/g, (marker) => { prefix += marker; return ""; });
+      return prefix + " ".repeat(pad) + truncateToWidth(content, innerWidth);
     });
   }
 
@@ -95,6 +98,21 @@ function isPiCompactionSummary(component: Component): boolean {
     if (prototype.constructor?.name === "CompactionSummaryMessageComponent") return true;
   }
   return false;
+}
+
+// shortcut: pi-visible-scrollbar has no transcript projection API; unwrap only its validated archive/chunk containers.
+function isArchivedTranscript(component: Component): component is Container & { readonly isPending: boolean } {
+  return component instanceof Container && component.constructor.name === "ArchivedHistory"
+    && typeof (component as Container & { isPending?: unknown }).isPending === "boolean"
+    && component.children.every((child) => child instanceof Container && child.constructor.name === "ArchivedChunk");
+}
+
+function isUserBoundary(component: Component): boolean {
+  if (component instanceof UserMessageComponent || component instanceof SkillInvocationMessageComponent) return true;
+  if (component.constructor !== Container) return false;
+  const children = (component as Container).children;
+  return children.some((child) => !(child instanceof Spacer))
+    && children.every((child) => child instanceof Spacer || child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent);
 }
 
 // Reuse native nodes, including thinking mouse handlers and OSC transcript markers.
@@ -206,18 +224,15 @@ class FoldGroup extends Container {
       if (state.result?.isError) failed++;
     }
     const kind = this.kind === "process" ? "task process" : this.kind === "history" ? "earlier history" : category(this.members[0].state.toolName);
-    let processDetails = "";
+    const details: string[] = [];
+    if (failed) details.push(`failed ${failed}`);
+    if (pending) details.push(`running ${pending}`);
     if (this.kind !== "tools") {
-      if (this.members.length) processDetails = `${this.members.length} tool calls (${[...names].map(([name, count]) => `${name} × ${count}`).join(", ")})`;
-      if (this.thinkingCount) processDetails += `${processDetails ? " · " : ""}thinking × ${this.thinkingCount}`;
-    }
-    const status = `${failed ? ` · failed ${failed}` : ""}${pending ? ` · running ${pending}` : ""}`;
-    const tools = kind === "tool calls" ? `（${[...names].map(([name, count]) => `${name} × ${count}`).join("、")}）` : "";
+      details.push(...[...names].map(([name, count]) => `${name} × ${count}`));
+      if (this.thinkingCount) details.push(`thinking × ${this.thinkingCount}`);
+    } else if (kind === "tool calls") details.push(...[...names].map(([name, count]) => `${name} × ${count}`));
     const count = this.kind === "tools" ? ` × ${this.members.length}` : "";
-    let details = status;
-    if (this.kind !== "tools" && processDetails) details += ` · ${processDetails}`;
-    if (this.kind === "tools") details += tools;
-    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${details}`)
+    return stripVTControlCharacters(`${this.expanded ? "▼" : "▶"} ${kind}${count}${details.length ? ` · ${details.join(", ")}` : ""}`)
       .replace(/\p{Cc}/gu, " ");
   }
 
@@ -267,11 +282,64 @@ export function attachToolGroups(
   let defaultHistoryExpanded = globalExpanded;
   let disposed = false;
   const enabled = () => !disposed && getConfig()?.enabled && (getConfig()?.collapseConsecutive || getConfig()?.collapseTaskProcess);
+  type ArchiveView = {
+    children: Component[];
+    tools: Map<ToolExecutionComponent, { state: ToolState; original: ToolRenderers; wrapped: ToolRenderers }>;
+  };
+  const archives = new Map<Container, ArchiveView>();
+  const releaseArchive = (archive: Container, view: ArchiveView) => {
+    for (const [component, { state, original, wrapped }] of view.tools) {
+      if (state.toolDefinition !== wrapped) continue;
+      state.toolDefinition = original;
+      component.setExpanded(state.expanded);
+    }
+    archive.invalidate();
+    archives.delete(archive);
+  };
+  const transcript = (width: number, expanded?: boolean) => {
+    const children: Component[] = [];
+    const captions = new Set<Component>();
+    const present = new Set<Container>();
+    for (const child of chat.children) {
+      if (!isArchivedTranscript(child)) { children.push(child); continue; }
+      present.add(child);
+      let view = archives.get(child);
+      if (!view) { view = { children: [], tools: new Map() }; archives.set(child, view); }
+      // Keep the archive's own construction/layout lifecycle before projecting its native rows.
+      child.render(width);
+      const nested = child.children.flatMap((chunk) => (chunk as Container).children);
+      let changed = false;
+      for (const component of nested) {
+        if (!(component instanceof ToolExecutionComponent)) continue;
+        const state = toolState(component);
+        if (!state || state.toolName === "todo") continue;
+        if (!view.tools.has(component) && state.toolDefinition) {
+          const original = state.toolDefinition;
+          const wrapped = toolDisplayRenderer(state.toolName, original, getConfig);
+          if (!wrapped || !Object.getOwnPropertyDescriptor(component, "toolDefinition")?.writable) continue;
+          view.tools.set(component, { state, original, wrapped });
+          state.toolDefinition = wrapped;
+          component.setExpanded(false);
+          changed = true;
+        }
+        if (expanded !== undefined && state.expanded !== expanded) { component.setExpanded(expanded); changed = true; }
+      }
+      if (changed) child.render(width);
+      if (!child.isPending) view.children = nested;
+      for (const component of view.children) children.push(component);
+      const first = view.children[0], last = view.children.at(-1);
+      if (first instanceof Text) captions.add(first);
+      if (last instanceof Text) captions.add(last);
+    }
+    for (const [archive, view] of archives) if (!present.has(archive)) releaseArchive(archive, view);
+    return { children, captions };
+  };
 
   const render = (width: number): ReturnType<Container["render"]> => {
     if (disposed) return originalRender.call(chat, width);
     const expanded = ui.getToolsExpanded();
-    if (expanded !== globalExpanded) {
+    const expansionChanged = expanded !== globalExpanded;
+    if (expansionChanged) {
       globalExpanded = expanded;
       defaultExpanded = defaultProcessExpanded = defaultHistoryExpanded = expanded;
       expandedById.clear();
@@ -291,8 +359,11 @@ export function attachToolGroups(
     let destination = inEarlierHistory ? historyContent : projection;
     const append = (component: Component) => destination.addChild(component);
     const historyMembers: Member[] = [];
+    const historyGroups: FoldGroup[] = [];
     let historyThinkingCount = 0;
-    if (!enabled() || !config) return originalRender.call(chat, width);
+    if (!config?.enabled) return originalRender.call(chat, width);
+    const { children, captions } = transcript(width, expansionChanged ? expanded : undefined);
+    if (!enabled()) return originalRender.call(chat, width);
     let run: Member[] = [];
     let boundary: Component | undefined;
     let boundarySlot = 0;
@@ -302,12 +373,8 @@ export function attachToolGroups(
     let processVisible = false;
     let processPad = 1;
     const add = (component: Component, members: Member[] = [], pad = 1, visibleHint?: boolean) => {
-      if (inEarlierHistory) {
-        append(component);
-        return;
-      }
       if (!config.collapseTaskProcess || !boundary) {
-        append(new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
+        append(inEarlierHistory ? component : new Indent(component, component instanceof ToolExecutionComponent ? 4 : 2));
         return;
       }
       const visible = members.length > 0 || (visibleHint ?? (!(component instanceof Spacer)
@@ -320,7 +387,7 @@ export function attachToolGroups(
     const flushProcess = () => {
       const trailing: Component[] = [];
       while (process[process.length - 1] instanceof Spacer) trailing.push(process.pop()!);
-      if (processVisible && boundary && !inEarlierHistory) {
+      if (processVisible && boundary) {
         let slots = byBoundary.get(boundary);
         if (!slots) {
           slots = new Map();
@@ -352,6 +419,7 @@ export function attachToolGroups(
         group.thinkingCount = processThinkingCount;
         group.outputPad = processPad;
         processes.push(group);
+        if (inEarlierHistory) historyGroups.push(group);
         append(group);
       } else {
         for (const component of process) append(component);
@@ -377,13 +445,22 @@ export function attachToolGroups(
         group.content = run.map(({ component }) => component);
         group.outputPad = run[0].state.outputPad;
         groups.push(group);
+        if (inEarlierHistory) historyGroups.push(group);
         add(group, run, group.outputPad);
       } else {
         for (const member of run) add(member.component, [member], member.state.outputPad);
       }
       run = [];
     };
-    for (const child of chat.children) {
+    for (const child of children) {
+      if (captions.has(child)) {
+        flush();
+        flushProcess();
+        append(child);
+        boundary = undefined;
+        boundarySlot = 0;
+        continue;
+      }
       if (child instanceof ToolExecutionComponent) {
         const state = toolState(child);
         if (state) {
@@ -391,8 +468,10 @@ export function attachToolGroups(
           if (state.argsPending) child.render(width);
           if (state.toolName === "todo") {
             flush();
-            if (inCompactedContext && config.collapseTaskProcess && boundary) {
-              add(child, [{ component: child, state }], state.outputPad);
+            if ((inEarlierHistory || inCompactedContext) && config.collapseTaskProcess && boundary) {
+              const member = { component: child, state };
+              if (inEarlierHistory) historyMembers.push(member);
+              add(child, [member], state.outputPad);
               flushProcess();
             } else {
               flushProcess();
@@ -418,7 +497,7 @@ export function attachToolGroups(
           } else {
             add(part.component, [], part.outputPad, part.visible);
             if (inEarlierHistory) historyThinkingCount += part.thinkingCount ?? 0;
-            else if (config.collapseTaskProcess && boundary) processThinkingCount += part.thinkingCount ?? 0;
+            if (config.collapseTaskProcess && boundary) processThinkingCount += part.thinkingCount ?? 0;
           }
         }
         continue;
@@ -434,10 +513,8 @@ export function attachToolGroups(
             let group = byHistory.get(child);
             if (!group) {
               if (!historyDefaultsApplied.has(child)) {
-                for (const { component } of historyMembers) component.setExpanded(false);
-                for (const component of historyContent.children) {
-                  if (component instanceof FoldGroup) component.setExpanded(false);
-                }
+                for (const { component, state } of historyMembers) if (state.expanded) component.setExpanded(false);
+                for (const group of historyGroups) group.setExpanded(false);
                 historyDefaultsApplied.add(child);
               }
               const id = persistentComponentId(child);
@@ -464,7 +541,7 @@ export function attachToolGroups(
         continue;
       }
       flush();
-      if (child instanceof UserMessageComponent || child instanceof SkillInvocationMessageComponent || isPiNotice(child)) {
+      if (isUserBoundary(child) || isPiNotice(child)) {
         flushProcess();
         append(child);
         boundary = child;
@@ -496,7 +573,7 @@ export function attachToolGroups(
       byFirst = new WeakMap();
       byBoundary = new WeakMap();
       byHistory = new WeakMap();
-      for (const child of chat.children) {
+      for (const child of transcript(tui.terminal.columns).children) {
         if (child instanceof ToolExecutionComponent) child.setExpanded(false);
       }
       chat.render(tui.terminal.columns);
@@ -511,6 +588,7 @@ export function attachToolGroups(
       byHistory = new WeakMap();
       if (chat.render === render) chat.render = originalRender;
       if (chat.handleMouse === mouse) chat.handleMouse = originalMouse;
+      for (const [archive, view] of archives) releaseArchive(archive, view);
       projection.clear();
       groups = [];
       processes = [];
