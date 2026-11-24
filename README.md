@@ -154,9 +154,9 @@ Command exited with code 1
 
 提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文和 Pi 原生状态提示保持可见，作为分段边界**；中间的过程内容一起收起。重载、模型切换、警告等 Pi 提示不会随过程折叠。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容不折叠；纯留白或不可见内容不生成空组。
 
-Pi compact 后，**原生压缩摘要和后续消息均不改写，也不回放 Pi 已省略的旧记录**。摘要后的过程按原有边界逐段折叠，`todo` 调用也随所在过程收起，展开后仍显示原生任务列表；没有压缩摘要时，`todo` 保持可见并分隔前后过程。
+Pi compact 后，**原生压缩摘要和后续消息均不改写，也不回放 Pi 已省略的旧记录**。摘要后的过程按原有边界逐段折叠；`todo` 保持 Pi 原生显示、分隔前后过程，不并入 `task process`。没有压缩摘要时也是如此。
 
-若当前 TUI 还保留摘要前的旧 transcript（包括 `pi-visible-scrollbar` 0.2.4 提供的归档），会单独折为 `earlier history`；展开后，内部每段 `task process`、二级工具组和单条结果仍默认收起，可逐层展开。不修改归档内容或原生摘要；展开历史后仍可使用滚动条的用户输入定位。摘要前只有原生留白时不生成空组。使用 `/earlier-history` 选择或批量开合，不影响内部过程或工具的开合状态。
+若当前 TUI 还保留摘要前的旧 transcript（包括 `pi-visible-scrollbar` 0.2.4 提供的归档），会单独折为 `earlier history`；展开后左侧缩进显示主题强调色竖线 `│`，不额外占用内容宽度。内部每段 `task process`、二级工具组和单条结果仍默认收起，可逐层展开。`todo` 保持原生显示并位于 `task process` 之外；收起整个 `earlier history` 时它也随历史归档收起，展开历史后仍可见。不修改归档内容或原生摘要；展开历史后仍可使用滚动条的用户输入定位。摘要前只有原生留白时不生成空组。使用 `/earlier-history` 选择或批量开合，不影响内部过程或工具的开合状态。
 
 ```text
 用户输入
@@ -311,9 +311,9 @@ Summaries update `running` and `failed` counts and turn red when a tool fails. *
 
 Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, and native Pi status notices remain visible as boundaries**; process content between them collapses into `task process`. Reload, model-switch, and warning notices do not disappear with a process. An ongoing process can fold before its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
 
-After compaction, **Pi's native summary and subsequent messages are not rewritten, and omitted history is not replayed**. Each post-summary process segment folds independently at its normal boundaries, including `todo` calls within that segment. Expanding it restores the native task list. Without a compaction summary, `todo` stays visible between process segments.
+After compaction, **Pi's native summary and subsequent messages are not rewritten, and omitted history is not replayed**. Each post-summary process segment folds at its normal boundaries. `todo` keeps its native display, separates surrounding processes, and stays outside `task process`, both before and after compaction.
 
-Any pre-summary transcript still present in the current TUI, including archives provided by `pi-visible-scrollbar` 0.2.4, is grouped separately as `earlier history`. When opened, each inner `task process`, consecutive-tool group, and individual result starts collapsed and can be expanded independently. Archive content and Pi's native summary stay unchanged; input navigation remains available when history is expanded. Native spacing alone never creates an empty earlier-history group. Use `/earlier-history` to select or batch-toggle it without changing inner process or tool states.
+Any pre-summary transcript still present in the current TUI, including archives provided by `pi-visible-scrollbar` 0.2.4, is grouped separately as `earlier history`. Expanded history replaces its left indentation with an accent-colored `│` rail without consuming additional content width. Each inner `task process`, consecutive-tool group, and individual result starts collapsed and can be expanded independently. `todo` remains native and outside `task process`; it is hidden with the collapsed earlier-history archive and visible when that archive is expanded. Archive content and Pi's native summary stay unchanged; input navigation remains available when history is expanded. Native spacing alone never creates an empty earlier-history group. Use `/earlier-history` to select or batch-toggle it without changing inner process or tool states.
 
 Only the `task process` heading row gets a dedicated gold-brown background in dark themes and pale gold in light themes. Child backgrounds and native tool success/error colors are unchanged. Level three keeps its existing alignment; level-two thinking/tool groups add two columns of indentation, and level-one individual tools add four. Narrow terminals reduce indentation as needed.
 

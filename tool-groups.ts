@@ -55,10 +55,12 @@ function foldStateFor(sessionId: string): Map<string, boolean> {
 
 class Indent extends Container {
   private columns: number;
+  private rail?: string;
 
-  constructor(component: Component, columns: number) {
+  constructor(component: Component, columns: number, rail?: string) {
     super();
     this.columns = columns;
+    this.rail = rail;
     this.addChild(component);
   }
 
@@ -73,7 +75,8 @@ class Indent extends Container {
       // Scrollbar anchors can precede Pi's markers; keep OSC133 before both anchors and indentation.
       let prefix = "";
       const content = line.replace(/\x1b\]133;[ABC](?:\x07|\x1b\\)/g, (marker) => { prefix += marker; return ""; });
-      return prefix + " ".repeat(pad) + truncateToWidth(content, innerWidth);
+      const indent = this.rail && pad ? this.rail + " ".repeat(pad - 1) : " ".repeat(pad);
+      return prefix + indent + truncateToWidth(content, innerWidth);
     });
   }
 
@@ -251,7 +254,7 @@ class FoldGroup extends Container {
     if (this.expanded) {
       for (const component of this.content) {
         const columns = this.kind !== "tools" && component instanceof ToolExecutionComponent ? 4 : 2;
-        this.children.push(new Indent(component, columns));
+        this.children.push(new Indent(component, columns, this.kind === "history" ? this.ui.theme.fg("accent", "│") : undefined));
       }
     }
     return super.render(width);
@@ -355,7 +358,6 @@ export function attachToolGroups(
     const historyContent = new Container();
     const compactionSummary = chat.children.find(isPiCompactionSummary);
     let inEarlierHistory = Boolean(config?.collapseTaskProcess && compactionSummary);
-    let inCompactedContext = false;
     let destination = inEarlierHistory ? historyContent : projection;
     const append = (component: Component) => destination.addChild(component);
     const historyMembers: Member[] = [];
@@ -468,15 +470,9 @@ export function attachToolGroups(
           if (state.argsPending) child.render(width);
           if (state.toolName === "todo") {
             flush();
-            if ((inEarlierHistory || inCompactedContext) && config.collapseTaskProcess && boundary) {
-              const member = { component: child, state };
-              if (inEarlierHistory) historyMembers.push(member);
-              add(child, [member], state.outputPad);
-              flushProcess();
-            } else {
-              flushProcess();
-              append(child);
-            }
+            flushProcess();
+            if (inEarlierHistory) historyMembers.push({ component: child, state });
+            append(child);
             boundary = child;
             boundarySlot = 0;
             continue;
@@ -535,7 +531,6 @@ export function attachToolGroups(
         }
         append(child);
         inEarlierHistory = false;
-        inCompactedContext = true;
         boundary = child;
         boundarySlot = 0;
         continue;
