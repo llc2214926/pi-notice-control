@@ -67,7 +67,11 @@ class Indent extends Container {
   render(width: number): string[] {
     const pad = this.padding(width);
     const innerWidth = Math.max(1, width - pad);
-    return super.render(innerWidth).map((line) => " ".repeat(pad) + truncateToWidth(line, innerWidth));
+    return super.render(innerWidth).map((line) => {
+      // Pi consumes OSC transcript markers only at the line start, before indentation.
+      const prefix = line.match(/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/)?.[0] ?? "";
+      return prefix + " ".repeat(pad) + truncateToWidth(line.slice(prefix.length), innerWidth);
+    });
   }
 
   handleMouse(event: TuiMouseEvent) {
@@ -133,7 +137,7 @@ function assistantParts(source: AssistantMessageComponent, width: number): Assis
       const rendered = [...render.call(part, partWidth)];
       if (hasZone && body && rendered.length) {
         rendered[0] = zoneStart + rendered[0];
-        rendered[rendered.length - 1] += zoneEnd;
+        rendered[rendered.length - 1] = zoneEnd + rendered[rendered.length - 1];
       }
       return rendered;
     };
@@ -283,6 +287,7 @@ export function attachToolGroups(
     const historyContent = new Container();
     const compactionSummary = chat.children.find(isPiCompactionSummary);
     let inEarlierHistory = Boolean(config?.collapseTaskProcess && compactionSummary);
+    let inCompactedContext = false;
     let destination = inEarlierHistory ? historyContent : projection;
     const append = (component: Component) => destination.addChild(component);
     const historyMembers: Member[] = [];
@@ -386,8 +391,13 @@ export function attachToolGroups(
           if (state.argsPending) child.render(width);
           if (state.toolName === "todo") {
             flush();
-            flushProcess();
-            append(child);
+            if (inCompactedContext && config.collapseTaskProcess && boundary) {
+              add(child, [{ component: child, state }], state.outputPad);
+              flushProcess();
+            } else {
+              flushProcess();
+              append(child);
+            }
             boundary = child;
             boundarySlot = 0;
             continue;
@@ -416,32 +426,39 @@ export function attachToolGroups(
       if (isPiCompactionSummary(child)) {
         flush();
         flushProcess();
-        if (inEarlierHistory && historyContent.children.length) {
-          let group = byHistory.get(child);
-          if (!group) {
-            if (!historyDefaultsApplied.has(child)) {
-              for (const { component } of historyMembers) component.setExpanded(false);
-              for (const component of historyContent.children) {
-                if (component instanceof FoldGroup) component.setExpanded(false);
-              }
-              historyDefaultsApplied.add(child);
-            }
-            const id = persistentComponentId(child);
-            const stateKey = id && JSON.stringify(["history", id]);
-            group = new FoldGroup("history", stateKey ? (expandedById.get(stateKey) ?? defaultHistoryExpanded) : defaultHistoryExpanded,
-              ui, tui, stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
-            byHistory.set(child, group);
-          }
-          group.content = historyContent.children;
-          group.members = historyMembers;
-          group.thinkingCount = historyThinkingCount;
-          histories.push(group);
+        if (inEarlierHistory) {
+          const hasHistory = historyContent.children.some((component) => !(component instanceof Spacer)
+            && component.render(width).some((line) => stripVTControlCharacters(line).trim()));
           destination = projection;
-          append(group);
-          append(new Spacer(1));
+          if (hasHistory) {
+            let group = byHistory.get(child);
+            if (!group) {
+              if (!historyDefaultsApplied.has(child)) {
+                for (const { component } of historyMembers) component.setExpanded(false);
+                for (const component of historyContent.children) {
+                  if (component instanceof FoldGroup) component.setExpanded(false);
+                }
+                historyDefaultsApplied.add(child);
+              }
+              const id = persistentComponentId(child);
+              const stateKey = id && JSON.stringify(["history", id]);
+              group = new FoldGroup("history", stateKey ? (expandedById.get(stateKey) ?? defaultHistoryExpanded) : defaultHistoryExpanded,
+                ui, tui, stateKey ? (expanded) => expandedById.set(stateKey, expanded) : undefined);
+              byHistory.set(child, group);
+            }
+            group.content = historyContent.children;
+            group.members = historyMembers;
+            group.thinkingCount = historyThinkingCount;
+            histories.push(group);
+            append(group);
+            append(new Spacer(1));
+          } else {
+            for (const component of historyContent.children) append(component);
+          }
         }
         append(child);
         inEarlierHistory = false;
+        inCompactedContext = true;
         boundary = child;
         boundarySlot = 0;
         continue;

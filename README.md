@@ -15,7 +15,7 @@
 - 按通知原文进行全文或包含匹配，可附加 `info`、`warning`、`error` 等级条件；首条规则命中生效，未命中原样放行。
 - 保留最近 100 条通知记录，支持临时暂停过滤、查看详情和重载 JSON。
 - 工具折叠时，`write` / `edit` 只显示工具名和路径；`bash` 只显示命令首行；`search` 系列只显示工具名和搜索词，多条查询附带省略数量。
-- 用户输入、模型正文、`todo` 和 Pi 原生状态提示保持可见；中间的 thinking、工具组等统一折为 `task process`。thinking 和 `todo` 沿用原生显示与折叠。
+- 用户输入、模型正文和 Pi 原生状态提示保持可见；过程内容按段折为 `task process`。压缩后的会话同样逐段折叠，不改写 Pi 原生摘要或消息。thinking 和 `todo` 沿用原生渲染器。
 - 连续 `read`、连续 `edit/write`、其他连续工具调用分别自动折为二级摘要；展开组后仍可单独展开工具。
 - 成功结果默认隐藏，也可配置最大显示行数；shell、`agent_browser`、`fetch`、`search` 系列的错误默认最多 5 行，shell 错误保留 `Command exited with code N`。
 - 展开工具后恢复原渲染器的完整显示；配置无效时停止过滤和精简，避免沿用旧的隐藏策略。
@@ -151,9 +151,11 @@ Command exited with code 1
 
 #### task process 三级折叠
 
-提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文、`todo` 和 Pi 原生状态提示始终保留原生显示，作为分段边界**；中间的过程内容一起收起。重载、模型切换、警告等 Pi 提示不会随过程折叠。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容不折叠；纯留白或不可见内容不生成空组。
+提供 `toolDisplay` 后默认启用，可用 `collapseTaskProcess: false` 单独关闭。**用户输入、模型正文和 Pi 原生状态提示保持可见，作为分段边界**；中间的过程内容一起收起。重载、模型切换、警告等 Pi 提示不会随过程折叠。正在执行、尚未出现下一段正文的过程也可折叠。第一条边界之前的启动内容不折叠；纯留白或不可见内容不生成空组。
 
-Pi compact 后保留在摘要之前的旧 transcript 会单独折为 `earlier history` 三级组；展开后，内层二级连续工具组和一级单条工具结果默认收起，可继续按需展开。使用 `/earlier-history` 选择或批量开合，不影响普通 `task process` 的状态。
+Pi compact 后，**原生压缩摘要和后续消息均不改写，也不回放 Pi 已省略的旧记录**。摘要后的过程按原有边界逐段折叠，`todo` 调用也随所在过程收起，展开后仍显示原生任务列表；没有压缩摘要时，`todo` 保持可见并分隔前后过程。
+
+若当前 TUI 还保留摘要前的旧 transcript，会单独折为 `earlier history` 三级组；展开后，内层二级连续工具组和一级单条工具结果默认收起，可继续按需展开。摘要前只有原生留白时不生成空组。使用 `/earlier-history` 选择或批量开合，不影响普通 `task process` 的状态。
 
 ```text
 用户输入
@@ -306,9 +308,11 @@ Summaries update `running` and `failed` counts and turn red when a tool fails. *
 
 #### task process (level three)
 
-Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, `todo`, and native Pi status notices remain visible as boundaries**; process content between them collapses into `task process`. Reload, model-switch, and warning notices do not disappear with a process. An ongoing process can fold before its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
+Enabled by default when `toolDisplay` is present. Set `collapseTaskProcess: false` to disable it independently. **User input, assistant text, and native Pi status notices remain visible as boundaries**; process content between them collapses into `task process`. Reload, model-switch, and warning notices do not disappear with a process. An ongoing process can fold before its next text boundary. Startup content before the first boundary stays visible, and blank content does not create empty groups.
 
-After Pi compacts a session, the retained transcript prefix before the compaction summary is grouped separately as `earlier history`. When opened, its inner level-two consecutive tool groups and level-one tool results start collapsed and can be expanded as needed. Use `/earlier-history` to select or batch-toggle this group independently of regular `task process` groups.
+After compaction, **Pi's native summary and subsequent messages are not rewritten, and omitted history is not replayed**. Each post-summary process segment folds independently at its normal boundaries, including `todo` calls within that segment. Expanding it restores the native task list. Without a compaction summary, `todo` stays visible between process segments.
+
+Any pre-summary transcript still present in the current TUI is grouped separately as `earlier history`. When opened, its inner level-two consecutive tool groups and level-one tool results start collapsed and can be expanded as needed. Native spacing alone never creates an empty earlier-history group. Use `/earlier-history` to select or batch-toggle this group independently of regular `task process` groups.
 
 Only the `task process` heading row gets a dedicated gold-brown background in dark themes and pale gold in light themes. Child backgrounds and native tool success/error colors are unchanged. Level three keeps its existing alignment; level-two thinking/tool groups add two columns of indentation, and level-one individual tools add four. Narrow terminals reduce indentation as needed.
 
