@@ -77,11 +77,11 @@ class Indent extends Container {
   }
 }
 
-// shortcut: Pi exposes no notice-row type; use its 1.5 class name until a public type is available.
+// shortcut: Pi exposes no notice-row type; use its 1.5 ThemedText/DynamicBorder classes until a public type is available.
 function isPiNotice(component: Component): boolean {
-  if (!(component instanceof Text)) return false;
   for (let prototype: object | null = Object.getPrototypeOf(component); prototype; prototype = Object.getPrototypeOf(prototype)) {
-    if (prototype.constructor?.name === "ThemedText") return true;
+    const name = prototype.constructor?.name;
+    if (name === "ThemedText" || name === "DynamicBorder") return true;
   }
   return false;
 }
