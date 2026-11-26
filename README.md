@@ -106,13 +106,14 @@ pi -e /absolute/path/to/pi-notice-control/index.ts
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `toolDisplay.enabled` | `true` | 工具精简开关；仅在提供 `toolDisplay` 对象时生效，`false` 恢复原显示 |
-| `toolDisplay.maxLines` | `0` | 折叠时成功结果最多显示的行数；`0` 完全隐藏结果，只保留调用行 |
+| `toolDisplay.maxLines` | `0` | 折叠时成功结果最多显示的行数；`0` 隐藏普通结果，保留调用行及完整输出保存失败警告 |
 | `toolDisplay.collapseConsecutive` | `true` | 按类别折叠至少两条连续工具调用；`false` 关闭二级工具分组，不影响三级 |
 | `toolDisplay.collapseTaskProcess` | `true` | 折叠用户输入、模型正文和 `todo` 之间的全部过程；`false` 关闭三级折叠 |
 | `toolDisplay.collapseCommandErrors` | `true` | 折叠 shell、`agent_browser`、`fetch`、`search` 系列的失败输出；`false` 使用原渲染器显示错误 |
-| `toolDisplay.errorMaxLines` | `5` | 折叠错误的最大行数；至少 `1`，shell 有退出码时设为 `1` 就只显示退出码 |
+| `toolDisplay.errorMaxLines` | `5` | 折叠错误的最大行数；至少 `1`，shell 有退出码时优先显示退出码，保存失败警告仍保留 |
 
 - 行数必须是安全整数，按终端自动换行后的**实际显示行**计算。上限包含省略提示和退出码，不包含调用行及 Pi 外框留白。行数太少时优先显示正文或退出码，不额外显示省略提示；窄终端中退出码缩写为 `exit N`，其他单行可能被截短。
+- Bash / PowerShell 的完整输出保存失败时，折叠结果保留一行 `Could not save the full output: ...` 警告，即使 `maxLines: 0` 也可见。警告和退出码同时存在时至少显示两行；工具组及过程摘要显示 `output save failed N`，以警告色提示。
 - 成功结果保留开头，shell 结果保留末尾；shell 错误保留末尾和已有的 `Command exited with code N`。超时、终止等没有退出码的失败不伪造退出码。浏览器、抓取、搜索错误保留原渲染器输出的开头。
 - `search` 系列包括 `search`、`web_search`、`symbol_search`、`ast_grep_search` 等名称为 `search`、以 `_search` 结尾或以 `search_` 开头的工具；调用摘要支持 `query`、`queries`、`pattern`。
 - 其他工具的调用标题也限制为一行；没有调用标题的渲染器以工具名、路径和符号名（若有）显示。展开后恢复原渲染器；没有调用渲染器时显示完整 JSON 参数。`todo` 不受这一限制。
@@ -147,7 +148,7 @@ Command exited with code 1
 
 - 在支持鼠标的模式下点击组标题，或运行 `/tool-groups` 选择一组展开/折叠。展开组只显示现有单条折叠行，不自动展开各条结果。
 - `/tool-groups expand` / `/tool-groups collapse` 批量开合组。Ctrl+O 仍可展开全部组和工具结果，再按一次收起。
-- 摘要实时显示 `running` 和 `failed` 数量，有失败时标红；**折叠组会同时隐藏成功和失败工具的详情**。展开组后，异常仍遵循单条错误行数配置，可继续展开单条查看完整输出。
+- 摘要实时显示 `running`、`failed` 和 `output save failed` 数量，有工具失败时标红，仅完整输出保存失败时使用警告色；**折叠组会同时隐藏成功和失败工具的详情**。展开组后，异常仍遵循单条错误行数配置，可继续展开单条查看完整输出。
 - 分组折叠状态在当前 Pi 进程内按会话保存；含稳定消息/工具 ID 的组在历史重建和 `/reload` 后保留，切换会话或重启 Pi 后重置。关闭二级折叠不会修改单条展开状态。
 
 #### task process 三级折叠
@@ -175,7 +176,7 @@ Reloaded keybindings, extensions, skills, prompts, themes, and context files
 - 外层三级保持当前对齐；二级（thinking、工具组等）额外缩进 2 列，一级单条工具额外缩进 4 列。窄屏自动减少缩进，避免超出宽度。
 - 点击标题，或用 `/task-process` 选择一组开合；`/task-process expand` / `collapse` 批量开合三级组。展开三级不改变内部二级组或单条工具的开合状态。
 - thinking 与工具组同属二级内容，**不另加 thinking 分组、不改写其显示策略**：保留 Pi 自带的标题、鼠标开合与 Ctrl+T。`todo` 不加入工具组，也不受本扩展的单条结果隐藏或行数限制。
-- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。过程摘要按逗号列出 `failed` / `running` 数量、各工具调用数及 `thinking` 数量，不再另显示冗余的工具总数；有工具失败时标红。
+- Ctrl+O 同步开合三级、二级工具组及单条工具；thinking 仍保持自己的原生状态。过程摘要按逗号列出 `failed` / `running` / `output save failed` 数量、各工具调用数及 `thinking` 数量，不再另显示冗余的工具总数；有工具失败时标红。
 - 同一条模型消息中混合的正文与 thinking 也分别归类；正文不随过程隐藏。若宿主助手组件布局不兼容，保留该消息的原始显示。
 
 #### 通知规则
@@ -283,7 +284,7 @@ Only the personal `notice-control.json` is read, never project rules. Use strict
 | Tool display field | Default | Behavior |
 | --- | --- | --- |
 | `enabled` | `true` | Enable compact tool rendering; `false` restores the original display |
-| `maxLines` | `0` | Maximum collapsed success-result lines; `0` hides the result entirely |
+| `maxLines` | `0` | Maximum collapsed success-result lines; `0` hides ordinary output while retaining full-output save warnings |
 | `collapseConsecutive` | `true` | Group two or more consecutive calls by category; `false` disables level-two tool groups |
 | `collapseTaskProcess` | `true` | Collapse all process content between user input, assistant text, and `todo`; `false` disables level three |
 | `collapseCommandErrors` | `true` | Fold shell, browser, fetch, and search errors; `false` uses the original error renderer |
@@ -292,6 +293,8 @@ Only the personal `notice-control.json` is read, never project rules. Use strict
 Limits count **wrapped terminal rows**, including the omission hint and exit status, excluding the call header and Pi's outer padding. Values must be safe integers (`maxLines >= 0`, `errorMaxLines >= 1`). When space is tight, content or exit status takes priority over the omission hint. Narrow terminals abbreviate the status to `exit N`; other single lines may be shortened.
 
 Collapsed `write` / `edit` calls show the tool name and path. `bash` shows its first command line and an omitted-line count. Search tools (`search`, names ending in `_search` or starting with `search_`) show `query`, the first of `queries` plus a count, or `pattern`. Other call headers, including `read_symbol` and `module_report`, also collapse to one row. Renderers without a call header show the tool name, path, and symbol when available. Expanding restores the original renderer, or complete JSON arguments if it has no call renderer. `todo` is exempt.
+
+Shell full-output save failures retain one `Could not save the full output: ...` warning row, even with `maxLines: 0`. A warning and exit status together use at least two rows. Tool-group and process summaries show `output save failed N` in the warning color unless a tool error takes priority.
 
 Success previews keep the beginning, shell previews keep the end. Shell errors pin an existing `Command exited with code N`; other shell failures retain trailing errors without inventing an exit code. Browser/fetch/search errors keep the beginning of the original renderer output. Error folding covers `bash`, `powershell`, search tools, `agent_browser` / `agent_browser_*`, `fetch` / `fetch_*` / names ending in `_fetch`, and `get_search_content`. Other tools' errors retain their original per-tool rendering.
 
@@ -305,7 +308,7 @@ Enabled by default when `toolDisplay` is present, including existing tool config
 
 Click a group title where mouse support is available, or use `/tool-groups` to choose and toggle one group. `/tool-groups expand` and `/tool-groups collapse` operate on all groups. Opening a group preserves each tool's independent expansion state. Ctrl+O still expands all groups and results, and collapses them on the next press.
 
-Summaries update `running` and `failed` counts and turn red when a tool fails. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Fold state for groups with stable message/tool IDs is kept per session in memory, survives transcript rebuilds and `/reload`, and resets when the session changes or Pi restarts.
+Summaries update `running`, `failed`, and `output save failed` counts; tool failures turn red and output-save failures use the warning color. **Collapsed groups hide both successful and failed tool details.** Opening a group keeps per-tool error limits; expand an individual tool to see its full output. Fold state for groups with stable message/tool IDs is kept per session in memory, survives transcript rebuilds and `/reload`, and resets when the session changes or Pi restarts.
 
 #### task process (level three)
 
@@ -319,7 +322,7 @@ Only the `task process` heading row gets a dedicated gold-brown background in da
 
 Click the title or use `/task-process` to select and toggle a group. `/task-process expand` and `/task-process collapse` open or close all process groups without changing their inner tool expansion states.
 
-Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process summaries list failure/running counts, per-tool call counts, and thinking-block counts separated by commas, without a redundant total tool-call count; failed processes turn red.
+Thinking is a level-two item using Pi's native label, mouse handling, and Ctrl+T—no extra thinking group or display policy. `todo` keeps its original renderer and is exempt from per-tool result hiding and line limits. Ctrl+O opens/closes process groups, tool groups, and tool results while leaving thinking in its native state. Process summaries list failure/running/output-save-failure counts, per-tool call counts, and thinking-block counts separated by commas, without a redundant total tool-call count; failed processes turn red.
 
 Mixed assistant text/thinking messages are split at their native text boundaries; text never disappears with the process. If the host assistant layout is incompatible, that message retains its original display.
 

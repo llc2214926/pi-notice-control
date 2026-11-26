@@ -2,9 +2,9 @@ import { stripVTControlCharacters } from "node:util";
 import { AssistantMessageComponent, SkillInvocationMessageComponent, UserMessageComponent, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, MouseRegion, Spacer, Text, okhslColor, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDisplayConfig } from "./rules.ts";
-import { toolDisplayRenderer } from "./tool-display.ts";
+import { fullOutputWarning, toolDisplayRenderer } from "./tool-display.ts";
 
-type ToolState = { toolName: string; toolCallId?: string; isPartial: boolean; outputPad: number; argsPending: boolean; expanded: boolean; toolDefinition?: ToolRenderers; result?: { isError: boolean } };
+type ToolState = { toolName: string; toolCallId?: string; isPartial: boolean; outputPad: number; argsPending: boolean; expanded: boolean; toolDefinition?: ToolRenderers; result?: { isError: boolean; details?: unknown } };
 type Member = { component: ToolExecutionComponent; state: ToolState };
 
 // shortcut: Pi has no transcript-group API; isolate and validate its 1.5 tool-row fields here.
@@ -200,8 +200,9 @@ class FoldGroup extends Container {
         const pad = Math.min(this.outputPad, Math.max(0, Math.floor((width - 1) / 2)));
         const failed = this.members.some(({ state }) => state.result?.isError);
         const pending = this.members.some(({ state }) => state.isPartial);
+        const warning = this.members.some(({ state }) => fullOutputWarning(state.result));
         let color: "toolTitle" | "warning" | "error" = "toolTitle";
-        if (pending) color = "warning";
+        if (pending || warning) color = "warning";
         if (failed) color = "error";
         const line = " ".repeat(pad) + truncateToWidth(this.ui.theme.fg(color, this.label())
           + this.ui.theme.fg("muted", ` · /${this.kind === "process" ? "task-process" : this.kind === "history" ? "earlier-history" : "tool-groups"}`), Math.max(0, width - pad));
@@ -221,14 +222,17 @@ class FoldGroup extends Container {
     const names = new Map<string, number>();
     let pending = 0;
     let failed = 0;
+    let outputErrors = 0;
     for (const { state } of this.members) {
       names.set(state.toolName, (names.get(state.toolName) ?? 0) + 1);
       if (state.isPartial) pending++;
       if (state.result?.isError) failed++;
+      if (fullOutputWarning(state.result)) outputErrors++;
     }
     const kind = this.kind === "process" ? "task process" : this.kind === "history" ? "earlier history" : category(this.members[0].state.toolName);
     const details: string[] = [];
     if (failed) details.push(`failed ${failed}`);
+    if (outputErrors) details.push(`output save failed ${outputErrors}`);
     if (pending) details.push(`running ${pending}`);
     if (this.kind !== "tools") {
       details.push(...[...names].map(([name, count]) => `${name} × ${count}`));
