@@ -24,7 +24,7 @@
 
 ### 安装
 
-要求 **Pi >=1.5.0**，不支持更早版本。二/三级折叠适配 Pi 1.5.2 / 1.6.0 的 TUI；其他布局无法接入时保留单条工具显示。Pi 直接加载 TypeScript，无需单独构建。
+要求 **Pi >=1.7.0 正式版**，不支持更早版本。二/三级折叠已验证 Pi 1.7.0 的 TUI；其他布局无法接入时保留单条工具显示。Pi 直接加载 TypeScript，无需单独构建。
 
 #### 从 GitHub 全局安装（推荐）
 
@@ -54,11 +54,11 @@ Pi 会将包登记到个人 `settings.json` 的 `packages` 列表，默认对所
 2. 如果之前加载了 `~/.pi/agent/extensions/pi-minimal-write-edit.ts`，请停用它，避免两个渲染器叠加。自动发现目录里的文件可移出该目录保存；手动注册的文件则移除对应配置条目。
 3. 在 Pi 中运行 `/reload` 或重启。
 
-`PI_CODING_AGENT_DIR` 会同时改变个人 `settings.json` 和 `notice-control.json` 所在的 agent 目录。扩展不自动创建配置文件；文件缺失时显示诊断并保持原始显示。
+`PI_CODING_AGENT_DIR` 或 Pi 1.7.0 的 `--agent-dir` 会同时改变个人 `settings.json` 和 `notice-control.json` 所在的 agent 目录。扩展不自动创建配置文件；文件缺失时显示诊断并保持原始显示。
 
 #### 启动顺序
 
-通知过滤必须先于通知生产者加载。Pi 1.5 的顺序为：命令行 `-e`、项目扩展、用户扩展、包内扩展、内置扩展。项目和用户扩展各自先显式注册、后自动发现；包内扩展先项目包、后用户包，同一作用域按包列表顺序。
+通知过滤必须先于通知生产者加载。Pi 1.7.0 的顺序为：命令行 `-e`、项目扩展、用户扩展、包内扩展、内置扩展。项目和用户扩展各自先显式注册、后自动发现；包内扩展先项目包、后用户包，同一作用域按包列表顺序。
 
 GitHub 安装无法捕获更早的项目或用户扩展启动通知。需要更早接管时，可将本地副本作为第一个 `-e` 参数：
 
@@ -240,7 +240,7 @@ Notification filtering and three-level folding for [Pi](https://pi.dev/). Simpli
 
 ### Installation
 
-Requires **Pi >=1.5.0**; earlier versions are unsupported. Group folding targets Pi 1.5.2 / 1.6.0's TUI; other layouts retain per-tool display if attachment is unavailable. No build or additional runtime dependency is required.
+Requires **stable Pi >=1.7.0**; earlier releases are unsupported. Group folding has been verified on the Pi 1.7.0 TUI; other layouts retain per-tool display if attachment is unavailable. No build or additional runtime dependency is required.
 
 ```sh
 pi install git:github.com/llc2214926/pi-notice-control
@@ -252,9 +252,9 @@ For a local installation, add the absolute path to `index.ts` first in your pers
 
 Save [notice-control.example.json](notice-control.example.json) as `~/.pi/agent/notice-control.json`, merging rather than overwriting existing rules. Disable the standalone `pi-minimal-write-edit.ts` if installed, then run `/reload` or restart Pi. Auto-discovered copies can be moved outside the extensions directory; remove explicit registrations if applicable.
 
-`PI_CODING_AGENT_DIR` changes the directory containing both personal settings and this configuration. Missing configuration produces a warning and leaves normal display intact.
+`PI_CODING_AGENT_DIR` or Pi 1.7.0’s `--agent-dir` changes the directory containing both personal settings and this configuration. Missing configuration produces a warning and leaves normal display intact.
 
-Filtering must load before notice producers. Pi 1.5 loads command-line extensions, project extensions, user extensions, package extensions, then built-ins. Project/user scopes load explicit entries before auto-discovered ones; project packages precede user packages, and each package list retains its order. For earlier interception, pass the local entry as the first `-e` argument:
+Filtering must load before notice producers. Pi 1.7.0 loads command-line extensions, project extensions, user extensions, package extensions, then built-ins. Project/user scopes load explicit entries before auto-discovered ones; project packages precede user packages, and each package list retains its order. For earlier interception, pass the local entry as the first `-e` argument:
 
 ```sh
 pi -e /absolute/path/to/pi-notice-control/index.ts

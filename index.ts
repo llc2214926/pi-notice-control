@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { getAgentDir, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, VERSION, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { findRule, parseConfig, type Config, type NoticeType } from "./rules.ts";
 import { registerToolDisplay } from "./tool-display.ts";
 import { registerToolGroups } from "./tool-groups.ts";
@@ -15,6 +15,11 @@ function displayText(text: string): string {
 }
 
 export default function noticeControl(pi: ExtensionAPI): void {
+  const version = /^([1-9]\d*)\.(0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(VERSION);
+  if (!version || version[0] !== VERSION || (version[1] === "1" && Number(version[2]) < 7)) {
+    throw new Error("pi-notice-control requires Pi >=1.7.0 (stable)");
+  }
+
   const configPath = join(getAgentDir(), "notice-control.json");
   let config: Config | undefined;
   let enabled = false;
@@ -77,7 +82,7 @@ export default function noticeControl(pi: ExtensionAPI): void {
       }
       if (!hide) original.call(ui, message, type);
     };
-    // shortcut: Pi 1.5 共用可写 ui；官方提供通知中间件后替换此包装。
+    // shortcut: 依赖宿主共用可写 ui；官方提供通知中间件后替换此包装。
     try {
       ui.notify = wrapper;
       if (ui.notify !== wrapper) throw new Error("ctx.ui.notify 不可替换");

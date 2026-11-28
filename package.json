@@ -10,11 +10,12 @@
   },
   "files": ["index.ts", "rules.ts", "tool-display.ts", "tool-groups.ts", "notice-control.example.json", "README.md"],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=1.5.0",
-    "@earendil-works/pi-tui": ">=1.5.0"
+    "@earendil-works/pi-coding-agent": ">=1.7.0",
+    "@earendil-works/pi-tui": ">=1.7.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.7.0",
+    "@earendil-works/pi-tui": "1.7.0",
     "@types/node": "^22.19.19",
     "typescript": "^5.9.3"
   },
